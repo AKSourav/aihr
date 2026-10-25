@@ -8,6 +8,7 @@ from services.temporal_worker.shared import (
     MarkUnreachableInput,
     PlaceCallInput,
     ScreeningCallInput,
+    SummarizeCallInput,
 )
 
 BUSINESS_HOURS_START = 9
@@ -80,6 +81,11 @@ class ScreeningCallWorkflow:
                 status = "lost"
 
             if status == "completed":
+                await workflow.execute_activity(
+                    "summarize_call",
+                    SummarizeCallInput(call_id=call_id),
+                    start_to_close_timeout=timedelta(seconds=60),
+                )
                 return "completed"
             if status == "declined":
                 return "declined"

@@ -10,3 +10,4 @@ call:          ; DATABASE_URL=postgresql+asyncpg://app:app@localhost:5432/hr TEM
 link:          ; DATABASE_URL=postgresql+asyncpg://app:app@localhost:5432/hr PYTHONPATH=.:./packages .venv/bin/python -m scripts.join_link $(ARGS)
 webtest:       ; cd scripts/web_test && python3 -m http.server 8080     # serves the local join-token test page
 test:          ; docker compose run --rm api pytest tests/unit
+eval-summaries: ; PYTHONPATH=.:./packages .venv/bin/python -m scripts.eval_summaries

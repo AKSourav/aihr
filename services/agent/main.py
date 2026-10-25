@@ -3,8 +3,10 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from livekit.agents import AgentSession, JobContext, JobExecutorType, WorkerOptions, cli
+import httpx
+from livekit.agents import AgentSession, JobContext, JobExecutorType, JobProcess, WorkerOptions, cli
 from livekit.agents.inference import TurnDetector
+from livekit.agents.llm import async_toolset  # noqa: F401  (force import at prewarm, not first use)
 from livekit.plugins import cartesia, deepgram, openai, silero
 
 from core.logging import configure_logging
@@ -18,6 +20,11 @@ from services.agent.transcript import TranscriptCollector
 logger = logging.getLogger(__name__)
 
 WEB_JOIN_TIMEOUT_S = 120.0
+
+
+def prewarm(proc: JobProcess) -> None:
+    proc.userdata["vad"] = silero.VAD.load()
+    httpx.AsyncClient()
 
 
 def print_transcript(turns: list) -> None:
@@ -68,7 +75,7 @@ async def entrypoint(ctx: JobContext) -> None:
         stt=deepgram.STT(api_key=settings.deepgram_api_key),
         llm=openai.LLM(**llm_kwargs),
         tts=cartesia.TTS(**tts_kwargs),
-        vad=silero.VAD.load(),
+        vad=ctx.proc.userdata["vad"],
         turn_detection=TurnDetector(),
     )
 
@@ -115,6 +122,7 @@ def main() -> None:
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
+            prewarm_fnc=prewarm,
             agent_name=settings.agent_name,
             ws_url=settings.livekit_url,
             api_key=settings.livekit_api_key,

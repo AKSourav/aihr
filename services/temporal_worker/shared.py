@@ -26,3 +26,8 @@ class PlaceCallResult:
 @dataclass
 class MarkUnreachableInput:
     application_id: str
+
+
+@dataclass
+class SummarizeCallInput:
+    call_id: str

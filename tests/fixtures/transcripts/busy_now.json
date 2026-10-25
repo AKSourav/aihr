@@ -1,0 +1,5 @@
+[
+  {"speaker": "agent", "text": "Hi, I'm an AI assistant calling on behalf of Acme Fintech about the Senior Backend Engineer role. Is now a good time to talk?", "started_at": "2026-10-20T12:00:00Z"},
+  {"speaker": "candidate", "text": "Actually I'm in the middle of something right now, can you call back tomorrow at 11am?", "started_at": "2026-10-20T12:00:10Z"},
+  {"speaker": "agent", "text": "Of course, I'll call back tomorrow at 11am. Thanks, have a good day!", "started_at": "2026-10-20T12:00:20Z"}
+]
