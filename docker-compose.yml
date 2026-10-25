@@ -1,0 +1,70 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: hr
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d hr"]
+      interval: 5s
+      retries: 10
+
+  temporal-init:
+    image: busybox
+    command: chown -R 1000:1000 /data
+    volumes: [temporaldata:/data]
+
+  temporal:
+    image: temporalio/temporal:latest
+    command: server start-dev --ip 0.0.0.0 --db-filename /data/temporal.db
+    ports: ["7233:7233", "8233:8233"]
+    volumes: [temporaldata:/data]
+    depends_on:
+      temporal-init: { condition: service_completed_successfully }
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio12345
+    ports: ["9000:9000", "9001:9001"]
+    volumes: [miniodata:/data]
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on: [minio]
+    entrypoint: >
+      sh -c "sleep 3 &&
+             mc alias set local http://minio:9000 minio minio12345 &&
+             mc mb -p local/hr-artifacts"
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+  api:
+    build: { context: ., dockerfile: services/api/Dockerfile }
+    env_file: .env
+    depends_on:
+      postgres: { condition: service_healthy }
+      temporal: { condition: service_started }
+    ports: ["8000:8000"]
+
+  temporal-worker:
+    build: { context: ., dockerfile: services/temporal_worker/Dockerfile }
+    env_file: .env
+    depends_on: [postgres, temporal, minio]
+
+  agent-worker:
+    build: { context: ., dockerfile: services/agent/Dockerfile }
+    env_file: .env
+    depends_on: [api]
+
+volumes:
+  pgdata:
+  temporaldata:
+  miniodata:
