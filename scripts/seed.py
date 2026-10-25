@@ -58,6 +58,45 @@ CUSTOMER_SUPPORT_JOB = {
     },
 }
 
+SDE1_JOB = {
+    "title": "SDE 1",
+    "rubric": [
+        {"dimension": "backend_depth", "weight": 0.35, "description": "Building and operating event-driven backend services in Python/Go/Java"},
+        {"dimension": "distributed_systems", "weight": 0.25, "description": "Experience with workflow orchestration, queues, and multi-tenant systems"},
+        {"dimension": "communication", "weight": 0.2, "description": "Clear, structured explanations"},
+        {"dimension": "role_fit", "weight": 0.2, "description": "Notice period, location, compensation alignment"},
+    ],
+    "question_plan": {
+        "intro_pitch": "Acme Fintech builds payment infrastructure for SMBs in India.",
+        "questions": [
+            {"id": "q_recent_project", "text": "Tell me about the most complex backend system you've worked on recently.", "probe": "Ask about scale and their specific role.", "required": True},
+            {"id": "q_incident", "text": "Describe a production incident you handled.", "probe": "Ask what they changed afterwards.", "required": True},
+            {"id": "q_notice", "text": "What is your current notice period?", "required": True, "extract": "notice_period_days"},
+            {"id": "q_ctc", "text": "What are your current and expected compensation?", "required": True, "extract": ["current_ctc", "expected_ctc"]},
+            {"id": "q_location", "text": "The role is hybrid in Bengaluru. Does that work for you?", "required": True, "extract": "open_to_location"},
+        ],
+        "faq": [
+            {"q": "Is the role remote?", "a": "Hybrid, three days a week in the Bengaluru office."},
+            {"q": "What's the interview process?", "a": "A technical round, a system design round, and a final conversation with the hiring manager."},
+        ],
+        "max_minutes": 15,
+    },
+}
+
+RESUME_CANDIDATE = {
+    "key": "sde1_resume",
+    "first_name": "Anupam",
+    "last_name": "Sourav",
+    "summary": (
+        "SDE-1 at a healthcare data platform (Python, Go, Java, PostgreSQL, Kafka, Temporal, "
+        "Docker, Kubernetes, AWS): built an event-driven S3 ingestion pipeline with Lambda and "
+        "Temporal, a scheduled multi-EHR data sync pipeline, per-tenant concurrency limits in a "
+        "Temporal orchestrator across 15+ tenants, and automated environment provisioning cutting "
+        "setup time from 1 hour to 10 minutes. Previously built FastAPI/Celery backend services "
+        "and a real-time Redis pub/sub alerting system. B.Tech in Computer Science (Data Science)."
+    ),
+}
+
 PERSONAS = [
     {
         "key": "strong_fit",
@@ -130,9 +169,11 @@ async def upsert_job(session: AsyncSession, org: Organization, spec: dict) -> Jo
     return job
 
 
-async def upsert_candidate(session: AsyncSession, org: Organization, persona: dict, phone_overrides: dict) -> Candidate:
+async def upsert_candidate(
+    session: AsyncSession, org: Organization, persona: dict, phone_overrides: dict, index: int
+) -> Candidate:
     email = f"{persona['key']}@candidates.test"
-    phone = phone_overrides.get(persona["key"], f"+91000000{PERSONAS.index(persona):04d}")
+    phone = phone_overrides.get(persona["key"], f"+91000000{index:04d}")
     now = datetime.now(timezone.utc)
 
     candidate = await session.scalar(select(Candidate).where(Candidate.email == email))
@@ -197,12 +238,18 @@ async def seed() -> None:
 
         backend_job = await upsert_job(session, org, SENIOR_BACKEND_JOB)
         await upsert_job(session, org, CUSTOMER_SUPPORT_JOB)
+        sde1_job = await upsert_job(session, org, SDE1_JOB)
 
-        for persona in PERSONAS:
-            candidate = await upsert_candidate(session, org, persona, phone_overrides)
+        for index, persona in enumerate(PERSONAS):
+            candidate = await upsert_candidate(session, org, persona, phone_overrides, index)
             await upsert_profile(session, candidate, persona["summary"])
             application = await upsert_application(session, candidate, backend_job)
             await upsert_initial_score(session, application)
+
+        resume_candidate = await upsert_candidate(session, org, RESUME_CANDIDATE, phone_overrides, len(PERSONAS))
+        await upsert_profile(session, resume_candidate, RESUME_CANDIDATE["summary"])
+        resume_application = await upsert_application(session, resume_candidate, sde1_job)
+        await upsert_initial_score(session, resume_application)
 
         await session.commit()
 
