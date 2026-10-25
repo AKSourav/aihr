@@ -26,6 +26,7 @@ class Settings(BaseSettings):
 
     deepgram_api_key: str = ""
     llm_api_key: str = ""
+    llm_base_url: str = ""
     llm_call_model: str = ""
     llm_summary_model: str = ""
     tts_api_key: str = ""
