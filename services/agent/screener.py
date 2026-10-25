@@ -75,7 +75,8 @@ class HRScreenerAgent(Agent):
         Args:
             when: What the candidate said about timing, e.g. "tomorrow at 11am".
         """
-        parsed = dateparser.parse(
+        parsed = await asyncio.to_thread(
+            dateparser.parse,
             when,
             settings={
                 "PREFER_DATES_FROM": "future",
