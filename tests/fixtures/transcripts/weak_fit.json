@@ -1,0 +1,19 @@
+[
+  {"speaker": "agent", "text": "Hi, I'm an AI assistant calling on behalf of Acme Fintech about the Senior Backend Engineer role. Is now a good time to talk?", "started_at": "2026-10-20T11:00:00Z"},
+  {"speaker": "candidate", "text": "Yeah sure.", "started_at": "2026-10-20T11:00:08Z"},
+  {"speaker": "agent", "text": "Do you agree to have this call recorded for hiring purposes?", "started_at": "2026-10-20T11:00:14Z"},
+  {"speaker": "candidate", "text": "Okay, fine.", "started_at": "2026-10-20T11:00:20Z"},
+  {"speaker": "agent", "text": "Tell me about the most complex backend system you've worked on recently.", "started_at": "2026-10-20T11:00:28Z"},
+  {"speaker": "candidate", "text": "Um, mostly I build CRUD APIs for our internal admin tools. Nothing too complex, just basic create, read, update, delete stuff with a database.", "started_at": "2026-10-20T11:00:45Z"},
+  {"speaker": "agent", "text": "Could you tell me more about the scale, like how many users or requests it handled?", "started_at": "2026-10-20T11:01:00Z"},
+  {"speaker": "candidate", "text": "Honestly I'm not sure, it's an internal tool so maybe like 50 people use it.", "started_at": "2026-10-20T11:01:10Z"},
+  {"speaker": "agent", "text": "Describe a production incident you handled.", "started_at": "2026-10-20T11:01:30Z"},
+  {"speaker": "candidate", "text": "There was a small bug where a form submitted twice sometimes. I added a check to prevent duplicate submissions. I wouldn't really call it an incident though, more just a bug fix.", "started_at": "2026-10-20T11:01:45Z"},
+  {"speaker": "agent", "text": "What is your current notice period?", "started_at": "2026-10-20T11:02:10Z"},
+  {"speaker": "candidate", "text": "Probably around a month, maybe a bit less, I haven't checked exactly.", "started_at": "2026-10-20T11:02:20Z"},
+  {"speaker": "agent", "text": "What are your current and expected compensation?", "started_at": "2026-10-20T11:02:30Z"},
+  {"speaker": "candidate", "text": "I'm at 8 LPA right now, looking for around 12 LPA.", "started_at": "2026-10-20T11:02:40Z"},
+  {"speaker": "agent", "text": "The role is hybrid in Bengaluru. Does that work for you?", "started_at": "2026-10-20T11:02:50Z"},
+  {"speaker": "candidate", "text": "I think so, yeah, should be okay.", "started_at": "2026-10-20T11:02:58Z"},
+  {"speaker": "agent", "text": "Thanks for your time today, the team will follow up soon. Have a great day!", "started_at": "2026-10-20T11:03:10Z"}
+]

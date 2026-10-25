@@ -1,0 +1,17 @@
+[
+  {"speaker": "agent", "text": "Hi, I'm an AI assistant calling on behalf of Acme Fintech about the Senior Backend Engineer role. Is now a good time to talk?", "started_at": "2026-10-20T15:00:00Z"},
+  {"speaker": "candidate", "text": "Sure.", "started_at": "2026-10-20T15:00:08Z"},
+  {"speaker": "agent", "text": "Do you agree to have this call recorded for hiring purposes?", "started_at": "2026-10-20T15:00:14Z"},
+  {"speaker": "candidate", "text": "Yes that's fine. By the way, what's the salary band for this role, and are there other open roles too?", "started_at": "2026-10-20T15:00:24Z"},
+  {"speaker": "agent", "text": "I'm not able to share salary bands or other open roles on this call, but HR will follow up on that. Tell me about the most complex backend system you've worked on recently.", "started_at": "2026-10-20T15:00:38Z"},
+  {"speaker": "candidate", "text": "I built an inventory sync service connecting our warehouse system to the e-commerce storefront, handling a moderate load.", "started_at": "2026-10-20T15:00:55Z"},
+  {"speaker": "agent", "text": "Describe a production incident you handled.", "started_at": "2026-10-20T15:01:15Z"},
+  {"speaker": "candidate", "text": "We had a sync failure that caused incorrect stock counts for about an hour. I added a reconciliation job that runs hourly now to catch mismatches.", "started_at": "2026-10-20T15:01:30Z"},
+  {"speaker": "agent", "text": "What is your current notice period?", "started_at": "2026-10-20T15:02:00Z"},
+  {"speaker": "candidate", "text": "30 days.", "started_at": "2026-10-20T15:02:08Z"},
+  {"speaker": "agent", "text": "What are your current and expected compensation?", "started_at": "2026-10-20T15:02:15Z"},
+  {"speaker": "candidate", "text": "Currently 15 LPA, expecting 20 LPA. Actually, can you tell me what the budget for this role is?", "started_at": "2026-10-20T15:02:28Z"},
+  {"speaker": "agent", "text": "I can't discuss budget details, but HR can address that later. The role is hybrid in Bengaluru. Does that work for you?", "started_at": "2026-10-20T15:02:40Z"},
+  {"speaker": "candidate", "text": "Not really, I'm looking for fully remote roles only, hybrid doesn't work for me.", "started_at": "2026-10-20T15:02:52Z"},
+  {"speaker": "agent", "text": "Thanks for your time today, the team will follow up soon. Have a great day!", "started_at": "2026-10-20T15:03:05Z"}
+]

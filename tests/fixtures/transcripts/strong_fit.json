@@ -1,0 +1,19 @@
+[
+  {"speaker": "agent", "text": "Hi, I'm an AI assistant calling on behalf of Acme Fintech about the Senior Backend Engineer role. Is now a good time to talk?", "started_at": "2026-10-20T10:00:00Z"},
+  {"speaker": "candidate", "text": "Yes, now works fine.", "started_at": "2026-10-20T10:00:08Z"},
+  {"speaker": "agent", "text": "Great, do you agree to have this call recorded for hiring purposes?", "started_at": "2026-10-20T10:00:14Z"},
+  {"speaker": "candidate", "text": "Sure, that's fine.", "started_at": "2026-10-20T10:00:20Z"},
+  {"speaker": "agent", "text": "Tell me about the most complex backend system you've worked on recently.", "started_at": "2026-10-20T10:00:28Z"},
+  {"speaker": "candidate", "text": "I led the migration of our payments platform to a new event-driven architecture, processing about 2 million transactions a day across multiple regions. I was the tech lead for the whole migration.", "started_at": "2026-10-20T10:00:40Z"},
+  {"speaker": "agent", "text": "Describe a production incident you handled.", "started_at": "2026-10-20T10:01:10Z"},
+  {"speaker": "candidate", "text": "We had a database failover that caused a 20 minute outage during a deploy. I led the root cause analysis, found it was a misconfigured connection pool timeout, and afterwards we added automated failover drills every quarter.", "started_at": "2026-10-20T10:01:25Z"},
+  {"speaker": "agent", "text": "What is your current notice period?", "started_at": "2026-10-20T10:02:00Z"},
+  {"speaker": "candidate", "text": "My notice period is 60 days.", "started_at": "2026-10-20T10:02:10Z"},
+  {"speaker": "agent", "text": "What are your current and expected compensation?", "started_at": "2026-10-20T10:02:18Z"},
+  {"speaker": "candidate", "text": "I'm currently at 28 LPA fixed, and I'm expecting around 35 LPA.", "started_at": "2026-10-20T10:02:30Z"},
+  {"speaker": "agent", "text": "The role is hybrid in Bengaluru. Does that work for you?", "started_at": "2026-10-20T10:02:40Z"},
+  {"speaker": "candidate", "text": "Yes, that works fine, I'm based in Bengaluru already.", "started_at": "2026-10-20T10:02:48Z"},
+  {"speaker": "candidate", "text": "What's the interview process like?", "started_at": "2026-10-20T10:02:55Z"},
+  {"speaker": "agent", "text": "It's a technical round, a system design round, and a final conversation with the hiring manager.", "started_at": "2026-10-20T10:03:02Z"},
+  {"speaker": "agent", "text": "Thanks for your time today, the team will follow up soon. Have a great day!", "started_at": "2026-10-20T10:03:15Z"}
+]

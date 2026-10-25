@@ -1,0 +1,29 @@
+You are scoring a completed AI hiring screening call for the {{ job_title }} role.
+
+Score the candidate against this rubric:
+{{ rubric_block }}
+
+Transcript:
+{{ transcript_block }}
+
+Return ONLY a JSON object with this exact shape:
+{
+  "summary": "2-4 sentence overview of the candidate's fit for the role",
+  "rubric_scores": [
+    {"dimension": "<dimension name, exactly as listed in the rubric above>", "score": <float 0.0-1.0>, "evidence": "<short quote or close paraphrase from the transcript supporting this score>"}
+  ],
+  "facts": {<fact fields, see exact list and types below>},
+  "red_flags": ["<any concerning signal found in the transcript>"],
+  "candidate_questions": ["<questions the candidate asked during the call>"],
+  "confidence": "low" | "medium" | "high"
+}
+
+The "facts" object must use exactly these keys, with no others, using the exact name and type given
+(use the JSON type shown, e.g. a real boolean true/false, not a sentence):
+{{ fact_fields_block }}
+
+Rules:
+- Score every rubric dimension listed above, even if evidence is thin (use a low score and say so in the evidence field).
+- Only state facts and evidence that are actually present in the transcript. Do not invent information.
+- If a fact was never discussed, omit its key from "facts" entirely rather than guessing.
+- "red_flags", "candidate_questions", and "facts" may be empty ([] or {}) if nothing applies.
