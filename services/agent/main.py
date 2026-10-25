@@ -3,7 +3,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from livekit.agents import AgentSession, JobContext, WorkerOptions, cli
+from livekit.agents import AgentSession, JobContext, JobExecutorType, WorkerOptions, cli
 from livekit.agents.inference import TurnDetector
 from livekit.plugins import cartesia, deepgram, openai, silero
 
@@ -119,6 +119,7 @@ def main() -> None:
             ws_url=settings.livekit_url,
             api_key=settings.livekit_api_key,
             api_secret=settings.livekit_api_secret,
+            job_executor_type=JobExecutorType.PROCESS,
         )
     )
 

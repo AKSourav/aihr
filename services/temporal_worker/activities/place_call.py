@@ -2,7 +2,6 @@ import logging
 from uuid import UUID
 
 from livekit import api
-from sqlalchemy import select
 from temporalio import activity
 
 from core.db import async_session
@@ -16,17 +15,14 @@ logger = logging.getLogger(__name__)
 @activity.defn
 async def place_call(input: PlaceCallInput) -> PlaceCallResult:
     settings = get_settings()
-    application_id = UUID(input.application_id)
+    call_id = UUID(input.call_id)
 
     async with async_session() as session:
-        call = await session.scalar(
-            select(Call).where(
-                Call.application_id == application_id, Call.attempt_no == input.attempt_no
-            )
-        )
+        call = await session.get(Call, call_id)
         if call is None:
             call = Call(
-                application_id=application_id,
+                id=call_id,
+                application_id=UUID(input.application_id),
                 attempt_no=input.attempt_no,
                 call_mode=input.call_mode,
                 status="dispatching",

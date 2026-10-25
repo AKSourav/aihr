@@ -21,7 +21,7 @@ async def _print_join_link(settings, application_id) -> None:
             call = await session.scalar(
                 select(Call)
                 .where(Call.application_id == application_id, Call.room_name.is_not(None))
-                .order_by(Call.attempt_no.desc())
+                .order_by(Call.created_at.desc())
             )
         if call is not None:
             token = (
