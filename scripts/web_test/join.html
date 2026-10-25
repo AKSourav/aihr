@@ -1,0 +1,90 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>aihr call test</title>
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.23.0/dist/livekit-client.umd.min.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; }
+    #log { white-space: pre-wrap; font-family: monospace; font-size: 13px; background: #111; color: #0f0; padding: 12px; height: 240px; overflow-y: auto; }
+    button { padding: 8px 16px; font-size: 14px; margin-right: 8px; }
+    #status { font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h2>aihr call test page</h2>
+  <p>Status: <span id="status">not connected</span></p>
+  <button id="connectBtn">Connect + enable mic</button>
+  <button id="disconnectBtn">Disconnect (simulates closing the tab)</button>
+  <div id="log"></div>
+
+  <script>
+    const { Room, RoomEvent } = LivekitClient;
+    const params = new URLSearchParams(window.location.search);
+    const url = params.get("url");
+    const token = params.get("token");
+
+    const logEl = document.getElementById("log");
+    const statusEl = document.getElementById("status");
+
+    function log(msg) {
+      logEl.textContent += msg + "\n";
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    let room;
+
+    async function connect() {
+      if (!url || !token) {
+        log("Missing ?url=...&token=... query params.");
+        return;
+      }
+      document.getElementById("connectBtn").disabled = true;
+      room = new Room();
+
+      room.on(RoomEvent.Connected, () => {
+        statusEl.textContent = "connected to " + room.name;
+        log("connected to room: " + room.name);
+        const existing = Array.from(room.remoteParticipants.values());
+        if (existing.length === 0) {
+          log("no other participants in the room yet (agent may not have joined)");
+        }
+        for (const p of existing) {
+          log("already in room: " + p.identity);
+        }
+      });
+      room.on(RoomEvent.Disconnected, (reason) => {
+        statusEl.textContent = "disconnected";
+        log("disconnected, reason: " + reason);
+      });
+      room.on(RoomEvent.ParticipantConnected, (p) => {
+        log("participant joined: " + p.identity);
+      });
+      room.on(RoomEvent.ParticipantDisconnected, (p) => {
+        log("participant left: " + p.identity);
+      });
+      room.on(RoomEvent.TrackSubscribed, (track, _pub, participant) => {
+        log("subscribed to " + track.kind + " track from " + participant.identity);
+        if (track.kind === "audio") {
+          const el = track.attach();
+          el.autoplay = true;
+          document.body.appendChild(el);
+        }
+      });
+
+      await room.connect(url, token);
+      await room.localParticipant.setMicrophoneEnabled(true);
+      log("microphone enabled, you can talk now");
+    }
+
+    function disconnectRoom() {
+      if (room) {
+        room.disconnect();
+      }
+    }
+
+    document.getElementById("connectBtn").addEventListener("click", connect);
+    document.getElementById("disconnectBtn").addEventListener("click", disconnectRoom);
+  </script>
+</body>
+</html>

@@ -1,18 +1,23 @@
 import asyncio
 import logging
 import os
+from datetime import datetime, timezone
 
 from livekit.agents import AgentSession, JobContext, WorkerOptions, cli
 from livekit.agents.inference import TurnDetector
 from livekit.plugins import cartesia, deepgram, openai, silero
 
 from core.logging import configure_logging
+from core.schemas import CallMode, CallOutcome, CallStatus
 from core.settings import get_settings
 from services.agent.context import fetch_call_context
+from services.agent.reporter import report_outcome
 from services.agent.screener import HRScreenerAgent
 from services.agent.transcript import TranscriptCollector
 
 logger = logging.getLogger(__name__)
+
+WEB_JOIN_TIMEOUT_S = 120.0
 
 
 def print_transcript(turns: list) -> None:
@@ -26,12 +31,26 @@ async def entrypoint(ctx: JobContext) -> None:
     await ctx.connect()
     logger.info("job connected", extra={"room": ctx.room.name})
 
-    call_id = os.environ.get("CONSOLE_CALL_ID")
+    call_id = ctx.job.metadata or os.environ.get("CONSOLE_CALL_ID")
     if not call_id:
-        raise RuntimeError("CONSOLE_CALL_ID must be set to the seeded call's id")
+        raise RuntimeError("no call_id in job metadata and CONSOLE_CALL_ID is not set")
 
     call_context = await fetch_call_context(call_id)
     settings = get_settings()
+
+    if call_context.call_mode == CallMode.web:
+        try:
+            await asyncio.wait_for(ctx.wait_for_participant(), timeout=WEB_JOIN_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            logger.info("no participant joined in time", extra={"call_id": call_id})
+            await report_outcome(
+                CallOutcome(
+                    call_id=call_context.call_id,
+                    status=CallStatus.no_answer,
+                    duration_seconds=0,
+                )
+            )
+            return
 
     tts_kwargs = {"api_key": settings.tts_api_key}
     if settings.tts_voice_id:
@@ -60,18 +79,33 @@ async def entrypoint(ctx: JobContext) -> None:
     session.on("close", lambda ev: closed.set())
 
     agent = HRScreenerAgent(call_context)
+    started_at = datetime.now(timezone.utc)
     await session.start(agent=agent, room=ctx.room)
     await closed.wait()
+
+    duration_seconds = int((datetime.now(timezone.utc) - started_at).total_seconds())
+    status = CallStatus(agent.outcome_status) if agent.outcome_status else CallStatus.failed
 
     print_transcript(transcript.turns)
     logger.info(
         "call finished",
         extra={
-            "outcome_status": agent.outcome_status,
+            "outcome_status": status.value,
             "answered_question_ids": sorted(agent.answered_question_ids),
             "callback_at": str(agent.callback_at),
             "recording_consent_granted": agent.recording_consent_granted,
         },
+    )
+
+    await report_outcome(
+        CallOutcome(
+            call_id=call_context.call_id,
+            status=status,
+            transcript=transcript.turns,
+            callback_at=agent.callback_at,
+            answered_question_ids=sorted(agent.answered_question_ids),
+            duration_seconds=duration_seconds,
+        )
     )
 
 

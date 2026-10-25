@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 
 import dateparser
 from livekit.agents import Agent, RunContext, function_tool
