@@ -7,7 +7,6 @@ from temporalio import workflow
 from services.temporal_worker.shared import (
     MarkUnreachableInput,
     PlaceCallInput,
-    PlaceCallResult,
     ScreeningCallInput,
 )
 
@@ -57,19 +56,20 @@ class ScreeningCallWorkflow:
             if not input.skip_business_hours:
                 await self._wait_for_business_hours()
 
-            place_result = await workflow.execute_activity(
+            call_id = str(workflow.uuid4())
+            await workflow.execute_activity(
                 "place_call",
                 PlaceCallInput(
+                    call_id=call_id,
                     application_id=input.application_id,
                     attempt_no=attempt_no,
                     call_mode=input.call_mode,
                 ),
                 start_to_close_timeout=timedelta(seconds=30),
-                result_type=PlaceCallResult,
             )
 
             self._outcome = None
-            self._expected_call_id = place_result.call_id
+            self._expected_call_id = call_id
             try:
                 await workflow.wait_condition(lambda: self._outcome is not None, timeout=SIGNAL_TIMEOUT)
                 if self._outcome:

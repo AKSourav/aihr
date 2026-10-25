@@ -1,5 +1,7 @@
 import asyncio
+import functools
 import logging
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 
 import dateparser
@@ -11,6 +13,8 @@ from services.agent.prompts import render_system_prompt
 logger = logging.getLogger(__name__)
 
 GOODBYE_WAIT_TIMEOUT_S = 8.0
+
+_DATE_PARSE_EXECUTOR = ProcessPoolExecutor(max_workers=1)
 
 
 class HRScreenerAgent(Agent):
@@ -75,15 +79,19 @@ class HRScreenerAgent(Agent):
         Args:
             when: What the candidate said about timing, e.g. "tomorrow at 11am".
         """
-        parsed = await asyncio.to_thread(
-            dateparser.parse,
-            when,
-            settings={
-                "PREFER_DATES_FROM": "future",
-                "RETURN_AS_TIMEZONE_AWARE": True,
-                "TIMEZONE": "Asia/Kolkata",
-                "TO_TIMEZONE": "UTC",
-            },
+        loop = asyncio.get_running_loop()
+        parsed = await loop.run_in_executor(
+            _DATE_PARSE_EXECUTOR,
+            functools.partial(
+                dateparser.parse,
+                when,
+                settings={
+                    "PREFER_DATES_FROM": "future",
+                    "RETURN_AS_TIMEZONE_AWARE": True,
+                    "TIMEZONE": "Asia/Kolkata",
+                    "TO_TIMEZONE": "UTC",
+                },
+            ),
         )
         self.callback_at = parsed
         self.outcome_status = "callback_requested"

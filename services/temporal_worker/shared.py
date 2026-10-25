@@ -11,6 +11,7 @@ class ScreeningCallInput:
 
 @dataclass
 class PlaceCallInput:
+    call_id: str
     application_id: str
     attempt_no: int
     call_mode: str
