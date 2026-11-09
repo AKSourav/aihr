@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CallMode(str, Enum):
@@ -41,7 +41,6 @@ class CallContext(BaseModel):
     company_name: str
     job_title: str
     candidate_first_name: str
-    profile_summary: str
     question_plan: QuestionPlan
     recording_consent_on_file: bool
     max_minutes: int
@@ -76,8 +75,13 @@ class CallOutcome(BaseModel):
 
 class RubricScore(BaseModel):
     dimension: str
-    score: float
+    score: float = Field(ge=0.0, le=1.0)
     evidence: str
+
+
+class TokenUsage(BaseModel):
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 class CallSummary(BaseModel):

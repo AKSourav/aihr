@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 
 from services.temporal_worker.shared import (
     MarkUnreachableInput,
@@ -19,7 +20,8 @@ MAX_UNREACHABLE_ATTEMPTS = 3
 MAX_TOTAL_ATTEMPTS = 6
 NORMAL_RETRY_DELAYS = [timedelta(hours=1), timedelta(hours=4)]
 FAST_RETRY_DELAYS = [timedelta(seconds=5), timedelta(seconds=15)]
-SIGNAL_TIMEOUT = timedelta(minutes=45)
+
+ACTIVITY_RETRY_POLICY = RetryPolicy(maximum_attempts=3, maximum_interval=timedelta(minutes=1))
 
 
 @workflow.defn
@@ -49,6 +51,7 @@ class ScreeningCallWorkflow:
     @workflow.run
     async def run(self, input: ScreeningCallInput) -> str:
         retry_delays = FAST_RETRY_DELAYS if input.fast_retries else NORMAL_RETRY_DELAYS
+        signal_timeout = timedelta(minutes=input.signal_timeout_min)
 
         attempt_no = 1
         unreachable_count = 0
@@ -67,12 +70,13 @@ class ScreeningCallWorkflow:
                     call_mode=input.call_mode,
                 ),
                 start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=ACTIVITY_RETRY_POLICY,
             )
 
             self._outcome = None
             self._expected_call_id = call_id
             try:
-                await workflow.wait_condition(lambda: self._outcome is not None, timeout=SIGNAL_TIMEOUT)
+                await workflow.wait_condition(lambda: self._outcome is not None, timeout=signal_timeout)
                 if self._outcome:
                     status = self._outcome["status"]
                 else:
@@ -84,7 +88,8 @@ class ScreeningCallWorkflow:
                 await workflow.execute_activity(
                     "summarize_call",
                     SummarizeCallInput(call_id=call_id),
-                    start_to_close_timeout=timedelta(seconds=60),
+                    start_to_close_timeout=timedelta(seconds=120),
+                    retry_policy=ACTIVITY_RETRY_POLICY,
                 )
                 return "completed"
             if status == "declined":
@@ -111,5 +116,6 @@ class ScreeningCallWorkflow:
             "mark_unreachable",
             MarkUnreachableInput(application_id=input.application_id),
             start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=ACTIVITY_RETRY_POLICY,
         )
         return "unreachable"

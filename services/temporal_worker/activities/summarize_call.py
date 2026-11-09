@@ -5,13 +5,14 @@ from sqlalchemy import select
 from temporalio import activity
 
 from core.db import async_session
-from core.models import Call
+from core.fairness import protected_terms
+from core.models import AuditEvent, Call
 from core.models import CallSummary as CallSummaryRow
-from core.models import Score
+from core.models import LlmUsage, Score
 from core.schemas import Turn
 from core.settings import get_settings
 from core.storage import Storage
-from core.summarizer import PROMPT_VERSION, summarize_transcript
+from core.summarizer import PROMPT_VERSION, moderate, summarize_transcript
 from services.temporal_worker.shared import SummarizeCallInput
 
 logger = logging.getLogger(__name__)
@@ -51,8 +52,48 @@ async def summarize_call(input: SummarizeCallInput) -> None:
         transcript_data = Storage().download_json(key)
         transcript = [Turn.model_validate(turn) for turn in transcript_data]
 
-        summary = await summarize_transcript(job.title, job.rubric, job.question_plan, transcript)
+        summary, usage = await summarize_transcript(job.title, job.rubric, job.question_plan, transcript)
 
+        kept_flags, dropped_flags = [], []
+        for flag in summary.red_flags:
+            (dropped_flags if protected_terms(flag) else kept_flags).append(flag)
+        summary.red_flags = kept_flags
+
+        summary_terms = protected_terms(summary.summary)
+        moderation_categories = await moderate(summary.summary)
+
+        if dropped_flags or summary_terms or moderation_categories:
+            logger.warning(
+                "summary flagged for review",
+                extra={
+                    "call_id": input.call_id,
+                    "dropped_red_flags": len(dropped_flags),
+                    "summary_terms": summary_terms,
+                    "moderation_categories": moderation_categories,
+                },
+            )
+            session.add(
+                AuditEvent(
+                    org_id=call.application.candidate.org_id,
+                    entity_type="call",
+                    entity_id=call_id,
+                    event_type="summary_flagged",
+                    payload={
+                        "dropped_red_flags": dropped_flags,
+                        "summary_terms": summary_terms,
+                        "moderation_categories": moderation_categories,
+                    },
+                )
+            )
+
+        session.add(
+            LlmUsage(
+                call_id=call_id,
+                model=settings.llm_summary_model,
+                prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+            )
+        )
         session.add(
             CallSummaryRow(
                 call_id=call_id,

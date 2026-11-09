@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     tts_api_key: str = ""
     tts_voice_id: str = ""
 
+    dev_routes_enabled: bool = False
+    rate_limit_per_minute: int = 120
+
     call_mode: str = "web"
     call_signal_timeout_min: int = 45
     max_call_duration_min: int = 20
