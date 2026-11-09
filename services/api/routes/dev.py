@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.db import get_session
 from core.models import Application, Candidate, Call
 from core.schemas import CallMode
+from services.api.routes.internal_calls import require_internal_token
 
 router = APIRouter(prefix="/dev/calls", tags=["dev"])
 
@@ -24,7 +25,7 @@ class CreateDevCallResponse(BaseModel):
     call_mode: CallMode
 
 
-@router.post("", response_model=CreateDevCallResponse)
+@router.post("", response_model=CreateDevCallResponse, dependencies=[Depends(require_internal_token)])
 async def create_dev_call(
     body: CreateDevCallRequest, session: AsyncSession = Depends(get_session)
 ) -> CreateDevCallResponse:

@@ -27,13 +27,6 @@ def prewarm(proc: JobProcess) -> None:
     httpx.AsyncClient()
 
 
-def print_transcript(turns: list) -> None:
-    print("\n--- Transcript ---")
-    for turn in turns:
-        print(f"[{turn.started_at.isoformat()}] {turn.speaker}: {turn.text}")
-    print("--- End transcript ---\n")
-
-
 async def entrypoint(ctx: JobContext) -> None:
     await ctx.connect()
     logger.info("job connected", extra={"room": ctx.room.name})
@@ -88,12 +81,15 @@ async def entrypoint(ctx: JobContext) -> None:
     agent = HRScreenerAgent(call_context)
     started_at = datetime.now(timezone.utc)
     await session.start(agent=agent, room=ctx.room)
-    await closed.wait()
+    try:
+        await asyncio.wait_for(closed.wait(), timeout=settings.max_call_duration_min * 60)
+    except asyncio.TimeoutError:
+        logger.warning("call exceeded max duration, shutting down", extra={"call_id": call_id})
+        session.shutdown()
 
     duration_seconds = int((datetime.now(timezone.utc) - started_at).total_seconds())
     status = CallStatus(agent.outcome_status) if agent.outcome_status else CallStatus.failed
 
-    print_transcript(transcript.turns)
     logger.info(
         "call finished",
         extra={

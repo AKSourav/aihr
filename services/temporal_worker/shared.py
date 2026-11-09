@@ -7,6 +7,7 @@ class ScreeningCallInput:
     call_mode: str = "web"
     skip_business_hours: bool = False
     fast_retries: bool = False
+    signal_timeout_min: int = 45
 
 
 @dataclass

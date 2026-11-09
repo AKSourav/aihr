@@ -95,7 +95,7 @@ class HRScreenerAgent(Agent):
         )
         self.callback_at = parsed
         self.outcome_status = "callback_requested"
-        logger.info("callback requested", extra={"when": when, "parsed": str(parsed)})
+        logger.info("callback requested", extra={"parsed": str(parsed)})
         asyncio.create_task(self._end_session_after_reply())
         return "Say a brief, warm goodbye confirming the callback time, then the call will end."
 

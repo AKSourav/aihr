@@ -26,6 +26,11 @@ dependencies = [
 [tool.uv]
 package = false
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests/unit"]
+
 [dependency-groups]
 dev = [
     "pytest==8.3.5",
