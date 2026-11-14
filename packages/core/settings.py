@@ -37,7 +37,6 @@ class Settings(BaseSettings):
     keycloak_audience: str = "aihr-api"
 
     dev_routes_enabled: bool = False
-    rate_limit_per_minute: int = 120
 
     call_mode: str = "web"
     call_signal_timeout_min: int = 45

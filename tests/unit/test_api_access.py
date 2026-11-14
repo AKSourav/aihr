@@ -69,9 +69,21 @@ def test_internal_routes_require_the_internal_token(monkeypatch):
     assert client.get(f"/internal/calls/{call_id}/context").status_code == 401
 
 
-def test_requests_over_the_limit_are_rejected(monkeypatch):
-    client = TestClient(build_app(monkeypatch, RATE_LIMIT_PER_MINUTE="3"))
+def test_opa_bundle_requires_the_internal_token(monkeypatch):
+    client = TestClient(build_app(monkeypatch, INTERNAL_API_TOKEN="tok"))
+
+    assert client.get("/internal/opa/bundle.tar.gz").status_code == 401
+    assert (
+        client.get(
+            "/internal/opa/bundle.tar.gz", headers={"Authorization": "Bearer wrong"}
+        ).status_code
+        == 401
+    )
+
+
+def test_health_is_not_rate_limited_in_process(monkeypatch):
+    client = TestClient(build_app(monkeypatch))
 
     codes = [client.get("/health").status_code for _ in range(5)]
 
-    assert codes == [200, 200, 200, 429, 429]
+    assert codes == [200] * 5

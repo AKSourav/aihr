@@ -52,6 +52,13 @@ jobs:
       - run: uv run alembic upgrade head
       - run: uv run pytest tests/integration
 
+  policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker run --rm -v "$PWD/deploy/opa:/policy" openpolicyagent/opa:1.4.2 check /policy
+      - run: docker run --rm -v "$PWD/deploy/opa:/policy" openpolicyagent/opa:1.4.2 test /policy -v
+
   typecheck:
     runs-on: ubuntu-latest
     steps:
