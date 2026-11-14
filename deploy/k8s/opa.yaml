@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: opa
-          image: openpolicyagent/opa:1.4.2-envoy
+          image: openpolicyagent/opa:1.4.2-envoy-static
           args:
             - run
             - --server

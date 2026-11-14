@@ -2,6 +2,38 @@
 
 Identity, edge policy and gateway config for the API. See issue #3 for the design.
 
+## Running it locally
+
+Docker Compose runs the application but **not** the gateway: Envoy Gateway is a Kubernetes controller that generates Envoy config from Gateway API CRDs, so there is nothing for it to do without a cluster. To exercise the real request path, use k3d.
+
+```
+./scripts/k3d-up.sh        # cluster, Envoy Gateway, the whole stack, migrated and seeded
+./scripts/k3d-verify.sh    # asserts the authz behaviour end to end through the gateway
+./scripts/k3d-down.sh      # delete the cluster
+```
+
+`deploy/local/` is a kustomize overlay over the **same** `k8s/` manifests this directory ships, patched for local use: HTTP listener instead of HTTPS, in-cluster Keycloak issuer, and a local rate limit instead of the global one (which needs a separate ratelimit service). The overlay builds with `--load-restrictor=LoadRestrictionsNone` because it reads `../opa/policy.rego` and `../k8s/*` from outside its own root.
+
+`deploy/local/realm-aihr-local.json` adds what production must never have: an `aihr-local-cli` client with the password grant enabled, and four fixed-ID users so memberships can be granted deterministically.
+
+| User | Password | Access |
+| --- | --- | --- |
+| `recruiter` | `recruiter` | recruiter on Acme Fintech |
+| `viewer` | `viewer` | viewer on Acme Fintech |
+| `root` | `root` | platform admin, no membership |
+| `outsider` | `outsider` | none |
+
+### Known image constraints
+
+Both of these were hit while bringing the cluster up, and both are about image availability rather than configuration:
+
+- **Use the `-static` OPA tags, not the default ones.** `openpolicyagent/opa:1.4.2-envoy` publishes **only** `linux/amd64`, so on Apple Silicon the image cannot run — the k3d nodes carry no qemu binfmt, so emulation is not a fallback. `openpolicyagent/opa:1.4.2-envoy-static` is multi-arch (`amd64` + `arm64`), has the same `/opa` entrypoint, and still starts the `envoy_ext_authz_grpc` plugin. CI uses `1.4.2-static` for `opa check` and `opa test` for the same reason, so the same command runs natively on either architecture.
+- **`minio/minio` is no longer pullable** — Docker Hub reports `pull access denied` and lists no tags, and `quay.io/minio/minio` is unavailable too. The local overlay therefore uses `chainguard/minio`, which is a drop-in: same `/usr/bin/minio` entrypoint, same arguments, and it still ships `mc` for bucket creation. It runs as UID 65532, hence the `fsGroup` on the pod. `docker-compose.yml` had the same problem on both `minio` and `minio-init` (which used `minio/mc:latest`) and now uses the same image; `mc` ships inside it, so the bucket and retention setup is unchanged.
+
+`agent-worker` is deliberately not deployed — it needs LiveKit, Deepgram and Cartesia credentials and would crashloop without them. Everything the auth path touches is there.
+
+Keycloak's issuer is pinned to `http://keycloak:8080` via `KC_HOSTNAME`. Tokens are therefore minted with `iss: http://keycloak:8080/realms/aihr`, which is what the API expects and what Envoy validates, so tokens must be requested from inside the cluster — `scripts/get_token.py` does that through `kubectl exec`. Requesting one from the host against a different hostname would produce a token every component correctly rejects.
+
 ## Layout
 
 | Path | What it is |
