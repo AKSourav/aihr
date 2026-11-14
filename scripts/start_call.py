@@ -69,6 +69,7 @@ async def start_call(persona_key: str, mode: str, skip_business_hours: bool, fas
             call_mode=mode,
             skip_business_hours=skip_business_hours,
             fast_retries=fast_retries,
+            signal_timeout_min=settings.call_signal_timeout_min,
         ),
         id=workflow_id,
         task_queue="voice",
