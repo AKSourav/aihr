@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Literal
 
 from livekit.agents import AgentSession
 from livekit.agents.llm import ChatMessage
@@ -6,7 +7,10 @@ from livekit.agents.voice.events import ConversationItemAddedEvent
 
 from core.schemas import Turn
 
-ROLE_TO_SPEAKER = {"assistant": "agent", "user": "candidate"}
+ROLE_TO_SPEAKER: dict[str, Literal["agent", "candidate"]] = {
+    "assistant": "agent",
+    "user": "candidate",
+}
 
 
 class TranscriptCollector:

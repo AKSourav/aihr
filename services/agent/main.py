@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timezone
+from typing import Any
 
 import httpx
 from livekit.agents import AgentSession, JobContext, JobExecutorType, JobProcess, WorkerOptions, cli
@@ -52,11 +53,11 @@ async def entrypoint(ctx: JobContext) -> None:
             )
             return
 
-    tts_kwargs = {"api_key": settings.tts_api_key}
+    tts_kwargs: dict[str, Any] = {"api_key": settings.tts_api_key}
     if settings.tts_voice_id:
         tts_kwargs["voice"] = settings.tts_voice_id
 
-    llm_kwargs = {
+    llm_kwargs: dict[str, Any] = {
         "model": settings.llm_call_model,
         "api_key": settings.llm_api_key,
         "max_completion_tokens": 300,
