@@ -21,6 +21,8 @@ routes := [
 	{"method": "GET", "pattern": "^/tenants/([^/]+)/calls/[^/]+$", "permission": "call:read"},
 ]
 
+platform_routes := [{"method": "POST", "pattern": "^/platform/break\\-glass$"}]
+
 request(sub, method, path) := {"attributes": {"request": {"http": {
 	"headers": {"x-jwt-sub": sub},
 	"method": method,
@@ -33,6 +35,7 @@ test_recruiter_may_create_a_call_in_their_tenant if {
 		with data.platform_admins as platform_admins
 		with data.role_permissions as role_permissions
 		with data.routes as routes
+		with data.platform_routes as platform_routes
 }
 
 test_viewer_may_not_create_a_call if {
@@ -41,6 +44,7 @@ test_viewer_may_not_create_a_call if {
 		with data.platform_admins as platform_admins
 		with data.role_permissions as role_permissions
 		with data.routes as routes
+		with data.platform_routes as platform_routes
 }
 
 test_viewer_may_read_a_call if {
@@ -49,6 +53,7 @@ test_viewer_may_read_a_call if {
 		with data.platform_admins as platform_admins
 		with data.role_permissions as role_permissions
 		with data.routes as routes
+		with data.platform_routes as platform_routes
 }
 
 test_recruiter_may_not_act_on_another_tenant if {
@@ -57,6 +62,7 @@ test_recruiter_may_not_act_on_another_tenant if {
 		with data.platform_admins as platform_admins
 		with data.role_permissions as role_permissions
 		with data.routes as routes
+		with data.platform_routes as platform_routes
 }
 
 test_platform_admin_is_allowed if {
@@ -65,6 +71,7 @@ test_platform_admin_is_allowed if {
 		with data.platform_admins as platform_admins
 		with data.role_permissions as role_permissions
 		with data.routes as routes
+		with data.platform_routes as platform_routes
 }
 
 test_unknown_subject_is_denied if {
@@ -73,6 +80,7 @@ test_unknown_subject_is_denied if {
 		with data.platform_admins as platform_admins
 		with data.role_permissions as role_permissions
 		with data.routes as routes
+		with data.platform_routes as platform_routes
 }
 
 test_unmapped_route_is_denied if {
@@ -81,6 +89,7 @@ test_unmapped_route_is_denied if {
 		with data.platform_admins as platform_admins
 		with data.role_permissions as role_permissions
 		with data.routes as routes
+		with data.platform_routes as platform_routes
 }
 
 test_query_string_does_not_defeat_matching if {
@@ -89,4 +98,32 @@ test_query_string_does_not_defeat_matching if {
 		with data.platform_admins as platform_admins
 		with data.role_permissions as role_permissions
 		with data.routes as routes
+		with data.platform_routes as platform_routes
+}
+
+test_platform_admin_may_open_break_glass if {
+	authz.allow with input as request("sub-root", "POST", "/platform/break-glass")
+		with data.memberships as memberships
+		with data.platform_admins as platform_admins
+		with data.role_permissions as role_permissions
+		with data.routes as routes
+		with data.platform_routes as platform_routes
+}
+
+test_recruiter_may_not_open_break_glass if {
+	not authz.allow with input as request("sub-recruiter", "POST", "/platform/break-glass")
+		with data.memberships as memberships
+		with data.platform_admins as platform_admins
+		with data.role_permissions as role_permissions
+		with data.routes as routes
+		with data.platform_routes as platform_routes
+}
+
+test_platform_admin_is_denied_on_an_unmapped_path if {
+	not authz.allow with input as request("sub-root", "GET", "/internal/opa/bundle.tar.gz")
+		with data.memberships as memberships
+		with data.platform_admins as platform_admins
+		with data.role_permissions as role_permissions
+		with data.routes as routes
+		with data.platform_routes as platform_routes
 }

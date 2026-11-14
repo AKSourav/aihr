@@ -35,9 +35,26 @@ Route-to-permission mapping lives in `packages/core/permissions.py` and is expor
 
 ## Rolling out
 
-`plugins.envoy_ext_authz_grpc.dry-run` is `true` in `k8s/opa-config.yaml`. In that mode OPA evaluates and logs every decision without enforcing it. Leave it there until the decision log shows no unexpected denials, then set it to `false`.
+`plugins.envoy_ext_authz_grpc.dry-run` is `false` in `k8s/opa-config.yaml` — the committed state is the steady state, enforcing.
+
+**For the first deploy into any environment, set it to `true` first.** In that mode OPA evaluates and logs every decision without acting on it. Watch the decision log until no unexpected denials appear, then set it back to `false` and redeploy.
 
 The first enforcing deploy of edge authorization is the most likely outage in this design. Do not skip the dry run.
+
+## Break-glass
+
+`is_platform_admin` does **not** grant tenant data access on its own. A platform admin with no membership gets 404 on every tenant route, exactly like any other stranger.
+
+To read tenant data, open a scope first:
+
+```
+POST /platform/break-glass
+  { "org_id": "...", "reason": "debugging call timeout #412", "minutes": 60 }
+```
+
+That writes a `break_glass_opened` audit event, and every subsequent request made under the scope writes a `break_glass_access` event naming the permission used. Scopes are bounded to 4 hours, are specific to one operator and one tenant, and expire without needing revocation.
+
+Break-glass is never evaluated at the edge. OPA lets platform admins past the gateway on tenant routes; the API is what demands an open scope. Short-lived, time-boxed state is the worst possible fit for a polled bundle, so it stays where it can be read transactionally.
 
 ## Operating
 

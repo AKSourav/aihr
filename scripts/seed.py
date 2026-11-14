@@ -22,6 +22,7 @@ from core.models import (
 ACCOUNT_NAME = "Acme Group"
 ORG_NAME = "Acme Fintech"
 HR_EMAIL = "hr@acme.test"
+PLATFORM_ADMIN_EMAIL = "root@aihr.test"
 
 SENIOR_BACKEND_JOB = {
     "title": "Senior Backend Engineer",
@@ -185,6 +186,18 @@ async def upsert_user(session: AsyncSession, account: Account, email: str, accou
     return user
 
 
+async def upsert_platform_admin(session: AsyncSession, email: str) -> User:
+    keycloak_sub = f"seed:{email}"
+    user = await session.scalar(select(User).where(User.keycloak_sub == keycloak_sub))
+    if user is None:
+        user = User(keycloak_sub=keycloak_sub, email=email, is_platform_admin=True)
+        session.add(user)
+    else:
+        user.is_platform_admin = True
+    await session.flush()
+    return user
+
+
 async def upsert_membership(session: AsyncSession, user: User, org: Organization, role: str) -> Membership:
     membership = await session.scalar(
         select(Membership).where(Membership.user_id == user.id, Membership.org_id == org.id)
@@ -285,6 +298,7 @@ async def seed() -> None:
         org = await upsert_org(session, account, ORG_NAME)
         hr_user = await upsert_user(session, account, HR_EMAIL, "owner")
         await upsert_membership(session, hr_user, org, "admin")
+        await upsert_platform_admin(session, PLATFORM_ADMIN_EMAIL)
 
         backend_job = await upsert_job(session, org, SENIOR_BACKEND_JOB)
         await upsert_job(session, org, CUSTOMER_SUPPORT_JOB)

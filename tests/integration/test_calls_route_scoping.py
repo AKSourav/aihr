@@ -6,17 +6,33 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db import get_session
-from core.models import Application
+from core.models import Application, Membership, User
 from core.settings import get_settings
+from services.api import auth
 
 TOKEN = "integration-token"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 
 @pytest.fixture
-async def client(monkeypatch, session: AsyncSession):
+async def recruiter(session: AsyncSession, two_tenants):
+    user = User(id=uuid.uuid4(), keycloak_sub=TOKEN, email="recruiter@acme.test")
+    session.add(user)
+    await session.flush()
+    session.add(
+        Membership(
+            id=uuid.uuid4(), user_id=user.id, org_id=two_tenants["org_a"], role="recruiter"
+        )
+    )
+    await session.flush()
+    return user
+
+
+@pytest.fixture
+async def client(monkeypatch, session: AsyncSession, recruiter):
     monkeypatch.setenv("DEV_ROUTES_ENABLED", "true")
     monkeypatch.setenv("INTERNAL_API_TOKEN", TOKEN)
+    monkeypatch.setattr(auth, "decode_token", lambda token: {"sub": token, "email": "r@acme.test"})
     get_settings.cache_clear()
 
     import services.api.main as api_main

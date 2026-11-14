@@ -29,6 +29,9 @@ spec:
         - path:
             type: PathPrefix
             value: /tenants
+        - path:
+            type: PathPrefix
+            value: /platform
       backendRefs:
         - name: aihr-api
           port: 8000

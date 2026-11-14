@@ -6,10 +6,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db import get_session
-from core.models import Application, Candidate, Call
+from core.models import Application, Call, Candidate
+from core.permissions import Permission
 from core.schemas import CallMode
-from services.api.routes.internal_calls import require_internal_token
-from services.api.tenancy import tenant_id
+from services.api.authz import TenantContext, require
 
 router = APIRouter(prefix="/tenants/{org_id}/calls", tags=["calls"])
 
@@ -26,12 +26,13 @@ class CreateDevCallResponse(BaseModel):
     call_mode: CallMode
 
 
-@router.post("", response_model=CreateDevCallResponse, dependencies=[Depends(require_internal_token)])
+@router.post("", response_model=CreateDevCallResponse)
 async def create_dev_call(
     body: CreateDevCallRequest,
-    org_id: UUID = Depends(tenant_id),
+    context: TenantContext = Depends(require(Permission.CALL_CREATE)),
     session: AsyncSession = Depends(get_session),
 ) -> CreateDevCallResponse:
+    org_id = context.org_id
     email = f"{body.candidate_key}@candidates.test"
     candidate = await session.scalar(
         select(Candidate).where(Candidate.org_id == org_id, Candidate.email == email)

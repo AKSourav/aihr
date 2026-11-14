@@ -32,17 +32,34 @@ def test_dev_routes_are_absent_by_default(monkeypatch):
     assert "/tenants/{org_id}/calls" not in client.get("/openapi.json").json()["paths"]
 
 
-def test_dev_routes_require_the_internal_token(monkeypatch):
+def test_tenant_routes_require_a_bearer_token(monkeypatch):
     client = TestClient(build_app(monkeypatch, DEV_ROUTES_ENABLED="true", INTERNAL_API_TOKEN="tok"))
 
     assert "/tenants/{org_id}/calls" in client.get("/openapi.json").json()["paths"]
     assert client.post(CALLS_PATH, json={"candidate_key": "x"}).status_code == 401
     assert (
         client.post(
-            CALLS_PATH, json={"candidate_key": "x"}, headers={"Authorization": "Bearer wrong"}
+            CALLS_PATH, json={"candidate_key": "x"}, headers={"Authorization": "Basic abc"}
         ).status_code
         == 401
     )
+
+
+def test_an_unverifiable_token_is_rejected(monkeypatch):
+    client = TestClient(build_app(monkeypatch, DEV_ROUTES_ENABLED="true", INTERNAL_API_TOKEN="tok"))
+
+    response = client.post(
+        CALLS_PATH, json={"candidate_key": "x"}, headers={"Authorization": "Bearer not.a.jwt"}
+    )
+
+    assert response.status_code == 401
+
+
+def test_break_glass_requires_a_bearer_token(monkeypatch):
+    client = TestClient(build_app(monkeypatch, INTERNAL_API_TOKEN="tok"))
+
+    assert "/platform/break-glass" in client.get("/openapi.json").json()["paths"]
+    assert client.post("/platform/break-glass", json={}).status_code == 401
 
 
 def test_calls_route_is_tenant_scoped(monkeypatch):

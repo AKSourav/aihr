@@ -23,8 +23,20 @@ tenant_of(pattern) := captured if {
 	captured := captures[0][1]
 }
 
+platform_matched contains r if {
+	some r in data.platform_routes
+	r.method == method
+	regex.match(r.pattern, path)
+}
+
 allow if {
 	subject in data.platform_admins
+	count(matched) > 0
+}
+
+allow if {
+	subject in data.platform_admins
+	count(platform_matched) > 0
 }
 
 allow if {
@@ -35,6 +47,7 @@ allow if {
 
 reason := "no matching route" if {
 	count(matched) == 0
+	count(platform_matched) == 0
 } else := "allowed" if {
 	allow
 } else := "denied"

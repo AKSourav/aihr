@@ -18,7 +18,7 @@ plugins:
   envoy_ext_authz_grpc:
     addr: :9191
     path: aihr/authz/allow
-    dry-run: true
+    dry-run: false
 
 decision_logs:
   console: true

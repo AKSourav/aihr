@@ -69,6 +69,15 @@ SENSITIVE: frozenset[Permission] = frozenset(
 
 ROUTES: list[tuple[str, str, Permission]] = [
     ("POST", "/tenants/{org_id}/calls", Permission.CALL_CREATE),
+    ("GET", "/tenants/{org_id}/applications", Permission.SCORE_READ),
+    ("GET", "/tenants/{org_id}/applications/{application_id}", Permission.SCORE_READ),
+    ("GET", "/tenants/{org_id}/calls/{call_id}", Permission.CALL_READ),
+    ("GET", "/tenants/{org_id}/calls/{call_id}/summary", Permission.SCORE_READ),
+    ("GET", "/tenants/{org_id}/calls/{call_id}/transcript", Permission.TRANSCRIPT_READ),
+]
+
+PLATFORM_ROUTES: list[tuple[str, str]] = [
+    ("POST", "/platform/break-glass"),
 ]
 
 
@@ -83,6 +92,13 @@ def route_table() -> list[dict]:
     return [
         {"method": method, "pattern": path_pattern(template), "permission": str(permission)}
         for method, template, permission in ROUTES
+    ]
+
+
+def platform_route_table() -> list[dict]:
+    return [
+        {"method": method, "pattern": path_pattern(template)}
+        for method, template in PLATFORM_ROUTES
     ]
 
 

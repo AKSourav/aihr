@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from core.permissions import (
+    PLATFORM_ROUTES,
     ROLE_PERMISSIONS,
     ROUTES,
     SENSITIVE,
@@ -85,6 +86,19 @@ def test_every_tenant_route_has_a_permission(monkeypatch):
             if method.upper() not in HTTP_METHODS:
                 continue
             assert (method.upper(), template) in mapped, f"{method} {template} has no permission"
+
+
+def test_every_platform_route_is_registered_in_the_app(monkeypatch):
+    paths = openapi_paths(monkeypatch, DEV_ROUTES_ENABLED="true", INTERNAL_API_TOKEN="tok")
+
+    for method, template in PLATFORM_ROUTES:
+        assert template in paths, f"{template} is a platform route but not served"
+        assert method.lower() in paths[template]
+
+
+def test_platform_routes_are_matched_by_their_pattern():
+    for method, template in PLATFORM_ROUTES:
+        assert re.match(path_pattern(template), template)
 
 
 def test_role_permission_table_covers_every_role():
