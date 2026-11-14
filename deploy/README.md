@@ -2,6 +2,38 @@
 
 Identity, edge policy and gateway config for the API. See issue #3 for the design.
 
+## Running it locally
+
+Docker Compose runs the application but **not** the gateway: Envoy Gateway is a Kubernetes controller that generates Envoy config from Gateway API CRDs, so there is nothing for it to do without a cluster. To exercise the real request path, use k3d.
+
+```
+./scripts/k3d-up.sh        # cluster, Envoy Gateway, the whole stack, migrated and seeded
+./scripts/k3d-verify.sh    # asserts the authz behaviour end to end through the gateway
+./scripts/k3d-down.sh      # delete the cluster
+```
+
+`deploy/local/` is a kustomize overlay over the **same** `k8s/` manifests this directory ships, patched for local use: HTTP listener instead of HTTPS, in-cluster Keycloak issuer, and a local rate limit instead of the global one (which needs a separate ratelimit service). The overlay builds with `--load-restrictor=LoadRestrictionsNone` because it reads `../opa/policy.rego` and `../k8s/*` from outside its own root.
+
+`deploy/local/realm-aihr-local.json` adds what production must never have: an `aihr-local-cli` client with the password grant enabled, and four fixed-ID users so memberships can be granted deterministically.
+
+| User | Password | Access |
+| --- | --- | --- |
+| `recruiter` | `recruiter` | recruiter on Acme Fintech |
+| `viewer` | `viewer` | viewer on Acme Fintech |
+| `root` | `root` | platform admin, no membership |
+| `outsider` | `outsider` | none |
+
+### Known image constraints
+
+Both of these were hit while bringing the cluster up, and both are about image availability rather than configuration:
+
+- **OPA's ext_authz image is amd64-only.** `openpolicyagent/opa:1.4.2-envoy` publishes no `linux/arm64` manifest, so on Apple Silicon the host pre-pull skips it and the k3d node cannot run it either (the nodes carry no qemu binfmt). On arm64 you need a multi-arch OPA build, or an amd64 cluster. `k3d-up.sh` warns and continues rather than aborting.
+- **`minio/minio` is no longer pullable** — Docker Hub reports `pull access denied` and lists no tags, and `quay.io/minio/minio` is unavailable too. The local overlay therefore uses `chainguard/minio`, which is a drop-in: same `/usr/bin/minio` entrypoint, same arguments, and it still ships `mc` for bucket creation. It runs as UID 65532, hence the `fsGroup` on the pod. **`docker-compose.yml` still pins `minio/minio:latest` and will fail the same way on a cold cache.**
+
+`agent-worker` is deliberately not deployed — it needs LiveKit, Deepgram and Cartesia credentials and would crashloop without them. Everything the auth path touches is there.
+
+Keycloak's issuer is pinned to `http://keycloak:8080` via `KC_HOSTNAME`. Tokens are therefore minted with `iss: http://keycloak:8080/realms/aihr`, which is what the API expects and what Envoy validates, so tokens must be requested from inside the cluster — `scripts/get_token.py` does that through `kubectl exec`. Requesting one from the host against a different hostname would produce a token every component correctly rejects.
+
 ## Layout
 
 | Path | What it is |
