@@ -9,8 +9,9 @@ from core.db import get_session
 from core.models import Application, Candidate, Call
 from core.schemas import CallMode
 from services.api.routes.internal_calls import require_internal_token
+from services.api.tenancy import tenant_id
 
-router = APIRouter(prefix="/dev/calls", tags=["dev"])
+router = APIRouter(prefix="/tenants/{org_id}/calls", tags=["calls"])
 
 
 class CreateDevCallRequest(BaseModel):
@@ -27,21 +28,27 @@ class CreateDevCallResponse(BaseModel):
 
 @router.post("", response_model=CreateDevCallResponse, dependencies=[Depends(require_internal_token)])
 async def create_dev_call(
-    body: CreateDevCallRequest, session: AsyncSession = Depends(get_session)
+    body: CreateDevCallRequest,
+    org_id: UUID = Depends(tenant_id),
+    session: AsyncSession = Depends(get_session),
 ) -> CreateDevCallResponse:
     email = f"{body.candidate_key}@candidates.test"
-    candidate = await session.scalar(select(Candidate).where(Candidate.email == email))
+    candidate = await session.scalar(
+        select(Candidate).where(Candidate.org_id == org_id, Candidate.email == email)
+    )
     if candidate is None:
         raise HTTPException(status_code=404, detail=f"no seeded candidate for key '{body.candidate_key}'")
 
     application = await session.scalar(
-        select(Application).where(Application.candidate_id == candidate.id).order_by(Application.created_at)
+        select(Application)
+        .where(Application.org_id == org_id, Application.candidate_id == candidate.id)
+        .order_by(Application.created_at)
     )
     if application is None:
         raise HTTPException(status_code=404, detail=f"candidate '{body.candidate_key}' has no application")
 
     call = Call(
-        org_id=application.org_id,
+        org_id=org_id,
         application_id=application.id,
         attempt_no=1,
         call_mode=body.call_mode.value,
