@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timezone
+from typing import Any
 
 import httpx
 from livekit.agents import AgentSession, JobContext, JobExecutorType, JobProcess, WorkerOptions, cli
@@ -25,13 +26,6 @@ WEB_JOIN_TIMEOUT_S = 120.0
 def prewarm(proc: JobProcess) -> None:
     proc.userdata["vad"] = silero.VAD.load()
     httpx.AsyncClient()
-
-
-def print_transcript(turns: list) -> None:
-    print("\n--- Transcript ---")
-    for turn in turns:
-        print(f"[{turn.started_at.isoformat()}] {turn.speaker}: {turn.text}")
-    print("--- End transcript ---\n")
 
 
 async def entrypoint(ctx: JobContext) -> None:
@@ -59,11 +53,11 @@ async def entrypoint(ctx: JobContext) -> None:
             )
             return
 
-    tts_kwargs = {"api_key": settings.tts_api_key}
+    tts_kwargs: dict[str, Any] = {"api_key": settings.tts_api_key}
     if settings.tts_voice_id:
         tts_kwargs["voice"] = settings.tts_voice_id
 
-    llm_kwargs = {
+    llm_kwargs: dict[str, Any] = {
         "model": settings.llm_call_model,
         "api_key": settings.llm_api_key,
         "max_completion_tokens": 300,
@@ -88,12 +82,15 @@ async def entrypoint(ctx: JobContext) -> None:
     agent = HRScreenerAgent(call_context)
     started_at = datetime.now(timezone.utc)
     await session.start(agent=agent, room=ctx.room)
-    await closed.wait()
+    try:
+        await asyncio.wait_for(closed.wait(), timeout=settings.max_call_duration_min * 60)
+    except asyncio.TimeoutError:
+        logger.warning("call exceeded max duration, shutting down", extra={"call_id": call_id})
+        session.shutdown()
 
     duration_seconds = int((datetime.now(timezone.utc) - started_at).total_seconds())
     status = CallStatus(agent.outcome_status) if agent.outcome_status else CallStatus.failed
 
-    print_transcript(transcript.turns)
     logger.info(
         "call finished",
         extra={
