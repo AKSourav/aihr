@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aihr-internal
+type: Opaque
+stringData:
+  internal-api-token: local-internal-token
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aihr-env
+data:
+  DATABASE_URL: postgresql+asyncpg://app:app@postgres:5432/hr
+  TEMPORAL_ADDRESS: temporal:7233
+  TEMPORAL_NAMESPACE: default
+  S3_ENDPOINT: http://minio:9000
+  S3_BUCKET: hr-artifacts
+  S3_ACCESS_KEY: minio
+  S3_SECRET_KEY: minio12345
+  API_INTERNAL_URL: http://aihr-api:8000
+  KEYCLOAK_URL: http://keycloak:8080
+  KEYCLOAK_REALM: aihr
+  KEYCLOAK_AUDIENCE: aihr-api
+  DEV_ROUTES_ENABLED: "true"
+  CALL_MODE: web
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aihr-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: aihr-api }
+  template:
+    metadata:
+      labels: { app: aihr-api }
+    spec:
+      containers:
+        - name: api
+          image: aihr-api:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef: { name: aihr-env }
+          env:
+            - name: INTERNAL_API_TOKEN
+              valueFrom:
+                secretKeyRef: { name: aihr-internal, key: internal-api-token }
+          ports: [{ containerPort: 8000 }]
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aihr-api
+spec:
+  selector: { app: aihr-api }
+  ports: [{ port: 8000, targetPort: 8000 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: temporal-worker }
+  template:
+    metadata:
+      labels: { app: temporal-worker }
+    spec:
+      containers:
+        - name: worker
+          image: aihr-worker:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef: { name: aihr-env }
+          env:
+            - name: INTERNAL_API_TOKEN
+              valueFrom:
+                secretKeyRef: { name: aihr-internal, key: internal-api-token }
+          resources:
+            requests: { cpu: 50m, memory: 192Mi }
