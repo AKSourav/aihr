@@ -56,7 +56,7 @@ THIRD_PARTY=(
   chainguard/minio:latest
   temporalio/temporal:latest
   quay.io/keycloak/keycloak:26.0
-  openpolicyagent/opa:1.4.2-envoy
+  openpolicyagent/opa:1.4.2-envoy-static
   "docker.io/envoyproxy/envoy:distroless-v1.32.3"
 )
 PULLED=()

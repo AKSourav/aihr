@@ -56,8 +56,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker run --rm -v "$PWD/deploy/opa:/policy" openpolicyagent/opa:1.4.2 check /policy
-      - run: docker run --rm -v "$PWD/deploy/opa:/policy" openpolicyagent/opa:1.4.2 test /policy -v
+      - run: docker run --rm -v "$PWD/deploy/opa:/policy" openpolicyagent/opa:1.4.2-static check /policy
+      - run: docker run --rm -v "$PWD/deploy/opa:/policy" openpolicyagent/opa:1.4.2-static test /policy -v
 
   typecheck:
     runs-on: ubuntu-latest
