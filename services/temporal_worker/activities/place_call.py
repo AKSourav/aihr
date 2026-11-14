@@ -5,7 +5,7 @@ from livekit import api
 from temporalio import activity
 
 from core.db import async_session
-from core.models import Call
+from core.models import Application, Call
 from core.settings import get_settings
 from services.temporal_worker.shared import PlaceCallInput, PlaceCallResult
 
@@ -20,9 +20,13 @@ async def place_call(input: PlaceCallInput) -> PlaceCallResult:
     async with async_session() as session:
         call = await session.get(Call, call_id)
         if call is None:
+            application = await session.get(Application, UUID(input.application_id))
+            if application is None:
+                raise ValueError(f"application {input.application_id} not found")
             call = Call(
                 id=call_id,
-                application_id=UUID(input.application_id),
+                org_id=application.org_id,
+                application_id=application.id,
                 attempt_no=input.attempt_no,
                 call_mode=input.call_mode,
                 status="dispatching",

@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa
+  labels:
+    app: opa
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: opa
+  template:
+    metadata:
+      labels:
+        app: opa
+    spec:
+      containers:
+        - name: opa
+          image: openpolicyagent/opa:1.4.2-envoy
+          args:
+            - run
+            - --server
+            - --config-file=/config/config.yaml
+            - --addr=0.0.0.0:8181
+            - --diagnostic-addr=0.0.0.0:8282
+            - /policy/policy.rego
+          ports:
+            - name: grpc
+              containerPort: 9191
+            - name: http
+              containerPort: 8181
+            - name: diagnostic
+              containerPort: 8282
+          env:
+            - name: INTERNAL_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: aihr-internal
+                  key: internal-api-token
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: policy
+              mountPath: /policy
+          readinessProbe:
+            httpGet:
+              path: /health?bundle=true
+              port: 8282
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8282
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: opa-config
+        - name: policy
+          configMap:
+            name: opa-policy
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa
+  labels:
+    app: opa
+spec:
+  selector:
+    app: opa
+  ports:
+    - name: grpc
+      port: 9191
+      targetPort: grpc
+      appProtocol: grpc
+    - name: http
+      port: 8181
+      targetPort: http

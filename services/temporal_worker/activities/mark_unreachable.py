@@ -22,7 +22,7 @@ async def mark_unreachable(input: MarkUnreachableInput) -> None:
         application.stage = "unreachable"
         session.add(
             AuditEvent(
-                org_id=application.candidate.org_id,
+                org_id=application.org_id,
                 entity_type="application",
                 entity_id=application_id,
                 event_type="application_unreachable",

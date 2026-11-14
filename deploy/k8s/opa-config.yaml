@@ -1,0 +1,27 @@
+services:
+  aihr_api:
+    url: http://aihr-api:8000/internal
+    credentials:
+      bearer:
+        scheme: Bearer
+        token: ${INTERNAL_API_TOKEN}
+
+bundles:
+  authz:
+    service: aihr_api
+    resource: opa/bundle.tar.gz
+    polling:
+      min_delay_seconds: 10
+      max_delay_seconds: 20
+
+plugins:
+  envoy_ext_authz_grpc:
+    addr: :9191
+    path: aihr/authz/allow
+    dry-run: false
+
+decision_logs:
+  console: true
+
+status:
+  console: true

@@ -6,11 +6,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db import get_session
-from core.models import Application, Candidate, Call
+from core.models import Application, Call, Candidate
+from core.permissions import Permission
 from core.schemas import CallMode
-from services.api.routes.internal_calls import require_internal_token
+from services.api.authz import TenantContext, require
 
-router = APIRouter(prefix="/dev/calls", tags=["dev"])
+router = APIRouter(prefix="/tenants/{org_id}/calls", tags=["calls"])
 
 
 class CreateDevCallRequest(BaseModel):
@@ -25,22 +26,30 @@ class CreateDevCallResponse(BaseModel):
     call_mode: CallMode
 
 
-@router.post("", response_model=CreateDevCallResponse, dependencies=[Depends(require_internal_token)])
+@router.post("", response_model=CreateDevCallResponse)
 async def create_dev_call(
-    body: CreateDevCallRequest, session: AsyncSession = Depends(get_session)
+    body: CreateDevCallRequest,
+    context: TenantContext = Depends(require(Permission.CALL_CREATE)),
+    session: AsyncSession = Depends(get_session),
 ) -> CreateDevCallResponse:
+    org_id = context.org_id
     email = f"{body.candidate_key}@candidates.test"
-    candidate = await session.scalar(select(Candidate).where(Candidate.email == email))
+    candidate = await session.scalar(
+        select(Candidate).where(Candidate.org_id == org_id, Candidate.email == email)
+    )
     if candidate is None:
         raise HTTPException(status_code=404, detail=f"no seeded candidate for key '{body.candidate_key}'")
 
     application = await session.scalar(
-        select(Application).where(Application.candidate_id == candidate.id).order_by(Application.created_at)
+        select(Application)
+        .where(Application.org_id == org_id, Application.candidate_id == candidate.id)
+        .order_by(Application.created_at)
     )
     if application is None:
         raise HTTPException(status_code=404, detail=f"candidate '{body.candidate_key}' has no application")
 
     call = Call(
+        org_id=org_id,
         application_id=application.id,
         attempt_no=1,
         call_mode=body.call_mode.value,

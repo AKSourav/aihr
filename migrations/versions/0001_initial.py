@@ -2,7 +2,7 @@
 
 Revision ID: 0001
 Revises:
-Create Date: 2026-10-25
+Create Date: 2026-11-14
 
 """
 import sqlalchemy as sa
@@ -17,42 +17,66 @@ depends_on = None
 
 def upgrade() -> None:
     op.create_table(
-        "organizations",
+        "accounts",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("name", sa.String, nullable=False, unique=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
     )
 
     op.create_table(
+        "organizations",
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("account_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("accounts.id"), nullable=False),
+        sa.Column("name", sa.String, nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint("account_id", "name"),
+    )
+
+    op.create_table(
         "users",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("keycloak_sub", sa.String, nullable=False, unique=True),
+        sa.Column("account_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("accounts.id"), nullable=True),
+        sa.Column("email", sa.String, nullable=False, index=True),
+        sa.Column("account_role", sa.String, nullable=False, server_default="member"),
+        sa.Column("is_platform_admin", sa.Boolean, nullable=False, server_default=sa.false()),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+    )
+
+    op.create_table(
+        "memberships",
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=False),
         sa.Column("org_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("organizations.id"), nullable=False),
-        sa.Column("email", sa.String, nullable=False, unique=True),
         sa.Column("role", sa.String, nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint("user_id", "org_id"),
     )
 
     op.create_table(
         "jobs",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("org_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("organizations.id"), nullable=False),
+        sa.Column("org_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("organizations.id"), nullable=False, index=True),
         sa.Column("title", sa.String, nullable=False),
         sa.Column("rubric", postgresql.JSON, nullable=False),
         sa.Column("question_plan", postgresql.JSON, nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint("id", "org_id"),
     )
 
     op.create_table(
         "candidates",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("org_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("organizations.id"), nullable=False),
+        sa.Column("org_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("organizations.id"), nullable=False, index=True),
         sa.Column("first_name", sa.String, nullable=False),
         sa.Column("last_name", sa.String, nullable=False),
-        sa.Column("email", sa.String, nullable=False, unique=True),
+        sa.Column("email", sa.String, nullable=False),
         sa.Column("phone_e164", sa.String, nullable=True),
         sa.Column("consent_ai_call_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("consent_recording_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint("id", "org_id"),
+        sa.UniqueConstraint("org_id", "email"),
     )
 
     op.create_table(
@@ -66,25 +90,32 @@ def upgrade() -> None:
     op.create_table(
         "applications",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("candidate_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("candidates.id"), nullable=False),
-        sa.Column("job_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("jobs.id"), nullable=False),
+        sa.Column("org_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("organizations.id"), nullable=False, index=True),
+        sa.Column("candidate_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("job_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("stage", sa.String, nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint("id", "org_id"),
+        sa.ForeignKeyConstraint(["candidate_id", "org_id"], ["candidates.id", "candidates.org_id"]),
+        sa.ForeignKeyConstraint(["job_id", "org_id"], ["jobs.id", "jobs.org_id"]),
     )
 
     op.create_table(
         "scores",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("application_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("applications.id"), nullable=False),
+        sa.Column("org_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("organizations.id"), nullable=False, index=True),
+        sa.Column("application_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("stage", sa.String, nullable=False),
         sa.Column("breakdown", postgresql.JSON, nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.ForeignKeyConstraint(["application_id", "org_id"], ["applications.id", "applications.org_id"]),
     )
 
     op.create_table(
         "calls",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("application_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("applications.id"), nullable=False),
+        sa.Column("org_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("organizations.id"), nullable=False, index=True),
+        sa.Column("application_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("attempt_no", sa.Integer, nullable=False, server_default="1"),
         sa.Column("call_mode", sa.String, nullable=False),
         sa.Column("status", sa.String, nullable=False),
@@ -95,12 +126,15 @@ def upgrade() -> None:
         sa.Column("error_detail", sa.Text, nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint("id", "org_id"),
+        sa.ForeignKeyConstraint(["application_id", "org_id"], ["applications.id", "applications.org_id"]),
     )
 
     op.create_table(
         "call_summaries",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("call_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("calls.id"), nullable=False, unique=True),
+        sa.Column("org_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("organizations.id"), nullable=False, index=True),
+        sa.Column("call_id", postgresql.UUID(as_uuid=True), nullable=False, unique=True),
         sa.Column("summary", sa.Text, nullable=False),
         sa.Column("rubric_scores", postgresql.JSON, nullable=False),
         sa.Column("facts", postgresql.JSON, nullable=False),
@@ -110,12 +144,26 @@ def upgrade() -> None:
         sa.Column("model_version", sa.String, nullable=False),
         sa.Column("prompt_version", sa.String, nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.ForeignKeyConstraint(["call_id", "org_id"], ["calls.id", "calls.org_id"]),
+    )
+
+    op.create_table(
+        "llm_usage",
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("org_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("organizations.id"), nullable=False, index=True),
+        sa.Column("call_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("model", sa.String, nullable=False),
+        sa.Column("prompt_tokens", sa.Integer, nullable=False, server_default="0"),
+        sa.Column("completion_tokens", sa.Integer, nullable=False, server_default="0"),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.ForeignKeyConstraint(["call_id", "org_id"], ["calls.id", "calls.org_id"]),
     )
 
     op.create_table(
         "audit_events",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("org_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("organizations.id"), nullable=True),
+        sa.Column("org_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("organizations.id"), nullable=True, index=True),
+        sa.Column("actor_user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=True),
         sa.Column("entity_type", sa.String, nullable=False),
         sa.Column("entity_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("event_type", sa.String, nullable=False),
@@ -126,6 +174,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("audit_events")
+    op.drop_table("llm_usage")
     op.drop_table("call_summaries")
     op.drop_table("calls")
     op.drop_table("scores")
@@ -133,5 +182,7 @@ def downgrade() -> None:
     op.drop_table("candidate_profiles")
     op.drop_table("candidates")
     op.drop_table("jobs")
+    op.drop_table("memberships")
     op.drop_table("users")
     op.drop_table("organizations")
+    op.drop_table("accounts")

@@ -18,6 +18,47 @@ jobs:
         env:
           PYTHONPATH: .:./packages
 
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: hr
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U app"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PYTHONPATH: .:./packages
+      DATABASE_URL: postgresql+asyncpg://app:app@localhost:5432/hr
+      TEMPORAL_ADDRESS: localhost:7233
+      S3_ENDPOINT: http://localhost:9000
+      S3_BUCKET: hr-artifacts
+      S3_ACCESS_KEY: minio
+      S3_SECRET_KEY: minio12345
+      API_INTERNAL_URL: http://localhost:8000
+      INTERNAL_API_TOKEN: ci-token
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.5.5"
+      - run: uv sync --frozen --group dev
+      - run: uv run alembic upgrade head
+      - run: uv run pytest tests/integration
+
+  policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker run --rm -v "$PWD/deploy/opa:/policy" openpolicyagent/opa:1.4.2 check /policy
+      - run: docker run --rm -v "$PWD/deploy/opa:/policy" openpolicyagent/opa:1.4.2 test /policy -v
+
   typecheck:
     runs-on: ubuntu-latest
     steps:
