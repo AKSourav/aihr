@@ -78,7 +78,7 @@ async def complete_call(
 
     session.add(
         AuditEvent(
-            org_id=call.application.candidate.org_id,
+            org_id=call.org_id,
             entity_type="call",
             entity_id=call_id,
             event_type="call_completed",

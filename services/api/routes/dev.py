@@ -41,6 +41,7 @@ async def create_dev_call(
         raise HTTPException(status_code=404, detail=f"candidate '{body.candidate_key}' has no application")
 
     call = Call(
+        org_id=application.org_id,
         application_id=application.id,
         attempt_no=1,
         call_mode=body.call_mode.value,

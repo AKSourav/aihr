@@ -74,7 +74,7 @@ async def summarize_call(input: SummarizeCallInput) -> None:
             )
             session.add(
                 AuditEvent(
-                    org_id=call.application.candidate.org_id,
+                    org_id=call.org_id,
                     entity_type="call",
                     entity_id=call_id,
                     event_type="summary_flagged",
@@ -88,6 +88,7 @@ async def summarize_call(input: SummarizeCallInput) -> None:
 
         session.add(
             LlmUsage(
+                org_id=call.org_id,
                 call_id=call_id,
                 model=settings.llm_summary_model,
                 prompt_tokens=usage.prompt_tokens,
@@ -96,6 +97,7 @@ async def summarize_call(input: SummarizeCallInput) -> None:
         )
         session.add(
             CallSummaryRow(
+                org_id=call.org_id,
                 call_id=call_id,
                 summary=summary.summary,
                 rubric_scores=[rs.model_dump() for rs in summary.rubric_scores],
@@ -109,6 +111,7 @@ async def summarize_call(input: SummarizeCallInput) -> None:
         )
         session.add(
             Score(
+                org_id=call.org_id,
                 application_id=call.application_id,
                 stage="post_call",
                 breakdown={

@@ -7,8 +7,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db import async_session
-from core.models import Application, Candidate, CandidateProfile, Job, Organization, Score, User
+from core.models import (
+    Account,
+    Application,
+    Candidate,
+    CandidateProfile,
+    Job,
+    Membership,
+    Organization,
+    Score,
+    User,
+)
 
+ACCOUNT_NAME = "Acme Group"
 ORG_NAME = "Acme Fintech"
 HR_EMAIL = "hr@acme.test"
 
@@ -137,24 +148,54 @@ PERSONAS = [
 ]
 
 
-async def upsert_org(session: AsyncSession, name: str) -> Organization:
-    org = await session.scalar(select(Organization).where(Organization.name == name))
+async def upsert_account(session: AsyncSession, name: str) -> Account:
+    account = await session.scalar(select(Account).where(Account.name == name))
+    if account is None:
+        account = Account(name=name)
+        session.add(account)
+        await session.flush()
+    return account
+
+
+async def upsert_org(session: AsyncSession, account: Account, name: str) -> Organization:
+    org = await session.scalar(
+        select(Organization).where(Organization.account_id == account.id, Organization.name == name)
+    )
     if org is None:
-        org = Organization(name=name)
+        org = Organization(account_id=account.id, name=name)
         session.add(org)
         await session.flush()
     return org
 
 
-async def upsert_user(session: AsyncSession, org: Organization, email: str, role: str) -> User:
-    user = await session.scalar(select(User).where(User.email == email))
+async def upsert_user(session: AsyncSession, account: Account, email: str, account_role: str) -> User:
+    keycloak_sub = f"seed:{email}"
+    user = await session.scalar(select(User).where(User.keycloak_sub == keycloak_sub))
     if user is None:
-        user = User(org_id=org.id, email=email, role=role)
+        user = User(
+            keycloak_sub=keycloak_sub,
+            account_id=account.id,
+            email=email,
+            account_role=account_role,
+        )
         session.add(user)
     else:
-        user.role = role
+        user.account_role = account_role
     await session.flush()
     return user
+
+
+async def upsert_membership(session: AsyncSession, user: User, org: Organization, role: str) -> Membership:
+    membership = await session.scalar(
+        select(Membership).where(Membership.user_id == user.id, Membership.org_id == org.id)
+    )
+    if membership is None:
+        membership = Membership(user_id=user.id, org_id=org.id, role=role)
+        session.add(membership)
+    else:
+        membership.role = role
+    await session.flush()
+    return membership
 
 
 async def upsert_job(session: AsyncSession, org: Organization, spec: dict) -> Job:
@@ -211,7 +252,9 @@ async def upsert_application(session: AsyncSession, candidate: Candidate, job: J
         select(Application).where(Application.candidate_id == candidate.id, Application.job_id == job.id)
     )
     if application is None:
-        application = Application(candidate_id=candidate.id, job_id=job.id, stage="shortlisted")
+        application = Application(
+            org_id=job.org_id, candidate_id=candidate.id, job_id=job.id, stage="shortlisted"
+        )
         session.add(application)
         await session.flush()
     return application
@@ -223,7 +266,12 @@ async def upsert_initial_score(session: AsyncSession, application: Application) 
     )
     breakdown = {"overall": 0.75, "notes": "seeded placeholder score"}
     if score is None:
-        score = Score(application_id=application.id, stage="initial", breakdown=breakdown)
+        score = Score(
+            org_id=application.org_id,
+            application_id=application.id,
+            stage="initial",
+            breakdown=breakdown,
+        )
         session.add(score)
         await session.flush()
     return score
@@ -233,8 +281,10 @@ async def seed() -> None:
     phone_overrides = json.loads(os.environ.get("SEED_PHONE_OVERRIDES", "{}"))
 
     async with async_session() as session:
-        org = await upsert_org(session, ORG_NAME)
-        await upsert_user(session, org, HR_EMAIL, "hr")
+        account = await upsert_account(session, ACCOUNT_NAME)
+        org = await upsert_org(session, account, ORG_NAME)
+        hr_user = await upsert_user(session, account, HR_EMAIL, "owner")
+        await upsert_membership(session, hr_user, org, "admin")
 
         backend_job = await upsert_job(session, org, SENIOR_BACKEND_JOB)
         await upsert_job(session, org, CUSTOMER_SUPPORT_JOB)
