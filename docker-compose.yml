@@ -79,6 +79,10 @@ services:
     image: redis:7-alpine
     ports: ["${REDIS_PORT:-6379}:6379"]
 
+  mailpit:
+    image: axllent/mailpit:v1.21
+    ports: ["${MAILPIT_PORT:-8025}:8025"]   # web inbox; the API and worker send over SMTP on mailpit:1025
+
   api:
     build: { context: ., dockerfile: services/api/Dockerfile }
     env_file: .env
