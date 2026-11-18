@@ -26,7 +26,9 @@ async def two_tenants(session: AsyncSession):
     account = Account(id=uuid.uuid4(), name=f"acct-{uuid.uuid4()}")
     org_a = Organization(id=uuid.uuid4(), account_id=account.id, name=f"A-{uuid.uuid4()}")
     org_b = Organization(id=uuid.uuid4(), account_id=account.id, name=f"B-{uuid.uuid4()}")
-    session.add_all([account, org_a, org_b])
+    other_account = Account(id=uuid.uuid4(), name=f"acct-{uuid.uuid4()}")
+    other_org = Organization(id=uuid.uuid4(), account_id=other_account.id, name=f"C-{uuid.uuid4()}")
+    session.add_all([account, org_a, org_b, other_account, other_org])
     await session.flush()
 
     candidate_a = Candidate(
@@ -42,6 +44,9 @@ async def two_tenants(session: AsyncSession):
     await session.flush()
 
     return {
+        "account": account.id,
+        "other_account": other_account.id,
+        "other_org": other_org.id,
         "org_a": org_a.id,
         "org_b": org_b.id,
         "candidate_a": candidate_a.id,

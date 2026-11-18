@@ -70,7 +70,7 @@ async def seeded(session: AsyncSession, two_tenants):
 
 async def make_member(session: AsyncSession, org_id, role: str) -> str:
     sub = str(uuid.uuid4())
-    user = User(id=uuid.uuid4(), keycloak_sub=sub, email=f"{role}@acme.test")
+    user = User(id=uuid.uuid4(), keycloak_sub=sub, email=f"{role}-{uuid.uuid4()}@acme.test")
     session.add(user)
     await session.flush()
     session.add(Membership(id=uuid.uuid4(), user_id=user.id, org_id=org_id, role=role))
@@ -81,7 +81,7 @@ async def make_member(session: AsyncSession, org_id, role: str) -> str:
 @pytest.fixture
 async def client(monkeypatch, session: AsyncSession):
     monkeypatch.setenv("INTERNAL_API_TOKEN", "tok")
-    monkeypatch.setattr(auth, "decode_token", lambda token: {"sub": token, "email": "x@acme.test"})
+    monkeypatch.setattr(auth, "decode_token", lambda token: {"sub": token, "email": f"{token}@acme.test"})
     get_settings.cache_clear()
 
     import services.api.main as api_main
@@ -199,7 +199,7 @@ async def test_recruiter_may_attempt_a_transcript_read(client, session, two_tena
 
 async def test_a_non_member_sees_404_on_every_read(client, session, two_tenants, seeded):
     sub = str(uuid.uuid4())
-    session.add(User(id=uuid.uuid4(), keycloak_sub=sub, email="nobody@acme.test"))
+    session.add(User(id=uuid.uuid4(), keycloak_sub=sub, email=f"{uuid.uuid4()}@acme.test"))
     await session.flush()
 
     for path in (

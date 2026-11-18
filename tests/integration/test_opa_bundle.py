@@ -10,7 +10,12 @@ from services.api.bundle import bundle_data, pack, revision
 
 
 async def make_user(session: AsyncSession, **kwargs) -> User:
-    user = User(id=uuid.uuid4(), keycloak_sub=str(uuid.uuid4()), email="x@acme.test", **kwargs)
+    user = User(
+        id=uuid.uuid4(),
+        keycloak_sub=str(uuid.uuid4()),
+        email=f"{uuid.uuid4()}@acme.test",
+        **kwargs,
+    )
     session.add(user)
     await session.flush()
     return user
@@ -42,6 +47,53 @@ async def test_bundle_omits_users_without_memberships(session: AsyncSession):
     data = await bundle_data(session)
 
     assert user.keycloak_sub not in data["memberships"]
+
+
+async def test_account_owner_reaches_their_account(session: AsyncSession, two_tenants):
+    owner = await make_user(session, account_id=two_tenants["account"], account_role="owner")
+
+    data = await bundle_data(session)
+
+    assert data["account_access"][owner.keycloak_sub] == [str(two_tenants["account"])]
+
+
+async def test_tenant_admin_reaches_the_account_of_their_org(session: AsyncSession, two_tenants):
+    admin = await make_user(session)
+    session.add(
+        Membership(id=uuid.uuid4(), user_id=admin.id, org_id=two_tenants["org_a"], role="admin")
+    )
+    await session.flush()
+
+    data = await bundle_data(session)
+
+    assert data["account_access"][admin.keycloak_sub] == [str(two_tenants["account"])]
+
+
+async def test_a_recruiter_reaches_no_account(session: AsyncSession, two_tenants):
+    recruiter = await make_user(session)
+    session.add(
+        Membership(
+            id=uuid.uuid4(), user_id=recruiter.id, org_id=two_tenants["org_a"], role="recruiter"
+        )
+    )
+    await session.flush()
+
+    data = await bundle_data(session)
+
+    assert recruiter.keycloak_sub not in data["account_access"]
+
+
+async def test_account_access_lists_are_sorted(session: AsyncSession, two_tenants):
+    admin = await make_user(session, account_id=two_tenants["account"], account_role="owner")
+    session.add(
+        Membership(id=uuid.uuid4(), user_id=admin.id, org_id=two_tenants["other_org"], role="admin")
+    )
+    await session.flush()
+
+    accounts = (await bundle_data(session))["account_access"][admin.keycloak_sub]
+
+    assert len(accounts) == 2
+    assert accounts == sorted(accounts)
 
 
 async def test_bundle_carries_routes_and_role_permissions(session: AsyncSession):

@@ -16,7 +16,7 @@ AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 @pytest.fixture
 async def recruiter(session: AsyncSession, two_tenants):
-    user = User(id=uuid.uuid4(), keycloak_sub=TOKEN, email="recruiter@acme.test")
+    user = User(id=uuid.uuid4(), keycloak_sub=TOKEN, email=f"{uuid.uuid4()}@acme.test")
     session.add(user)
     await session.flush()
     session.add(
@@ -32,7 +32,7 @@ async def recruiter(session: AsyncSession, two_tenants):
 async def client(monkeypatch, session: AsyncSession, recruiter):
     monkeypatch.setenv("DEV_ROUTES_ENABLED", "true")
     monkeypatch.setenv("INTERNAL_API_TOKEN", TOKEN)
-    monkeypatch.setattr(auth, "decode_token", lambda token: {"sub": token, "email": "r@acme.test"})
+    monkeypatch.setattr(auth, "decode_token", lambda token: {"sub": token, "email": f"{token}@acme.test"})
     get_settings.cache_clear()
 
     import services.api.main as api_main

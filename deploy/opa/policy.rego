@@ -18,7 +18,7 @@ matched contains r if {
 	regex.match(r.pattern, path)
 }
 
-tenant_of(pattern) := captured if {
+capture_of(pattern) := captured if {
 	captures := regex.find_all_string_submatch_n(pattern, path, 1)
 	captured := captures[0][1]
 }
@@ -41,8 +41,15 @@ allow if {
 
 allow if {
 	some r in matched
-	role := data.memberships[subject][tenant_of(r.pattern)]
+	r.scope == "tenant"
+	role := data.memberships[subject][capture_of(r.pattern)]
 	r.permission in data.role_permissions[role]
+}
+
+allow if {
+	some r in matched
+	r.scope == "account"
+	capture_of(r.pattern) in data.account_access[subject]
 }
 
 reason := "no matching route" if {
