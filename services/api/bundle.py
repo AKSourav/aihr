@@ -7,7 +7,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.models import Membership, User
-from core.permissions import platform_route_table, role_permission_table, route_table
+from core.permissions import (
+    platform_route_table,
+    role_permission_table,
+    route_table,
+    self_route_table,
+)
 
 
 async def bundle_data(session: AsyncSession) -> dict:
@@ -34,6 +39,7 @@ async def bundle_data(session: AsyncSession) -> dict:
         "role_permissions": role_permission_table(),
         "routes": route_table(),
         "platform_routes": platform_route_table(),
+        "self_routes": self_route_table(),
     }
 
 
@@ -44,6 +50,7 @@ MANIFEST_ROOTS = [
     "role_permissions",
     "routes",
     "platform_routes",
+    "self_routes",
 ]
 
 

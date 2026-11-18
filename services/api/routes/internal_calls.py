@@ -4,7 +4,6 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from temporalio.client import Client
 
 from core.db import get_session
 from core.models import AuditEvent, Call, Organization
@@ -12,6 +11,7 @@ from core.redaction import redact
 from core.schemas import CallContext, CallMode, CallOutcome, QuestionPlan
 from core.settings import get_settings
 from core.storage import Storage
+from services.api.temporal import screening_workflow_id, temporal_client
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +90,9 @@ async def complete_call(
     )
     await session.commit()
 
-    settings = get_settings()
-    workflow_id = f"call-{call.application.job_id}-{call.application.candidate_id}"
+    workflow_id = screening_workflow_id(call.application.job_id, call.application.candidate_id)
     try:
-        client = await Client.connect(settings.temporal_address, namespace=settings.temporal_namespace)
+        client = await temporal_client()
         handle = client.get_workflow_handle(workflow_id)
         await handle.signal("call_completed", outcome.model_dump(mode="json"))
     except Exception:

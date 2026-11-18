@@ -69,6 +69,7 @@ SENSITIVE: frozenset[Permission] = frozenset(
 
 ROUTES: list[tuple[str, str, Permission]] = [
     ("POST", "/tenants/{org_id}/calls", Permission.CALL_CREATE),
+    ("POST", "/tenants/{org_id}/applications/{application_id}/screenings", Permission.CALL_CREATE),
     ("GET", "/tenants/{org_id}/applications", Permission.SCORE_READ),
     ("GET", "/tenants/{org_id}/applications/{application_id}", Permission.SCORE_READ),
     ("GET", "/tenants/{org_id}/calls/{call_id}", Permission.CALL_READ),
@@ -78,6 +79,11 @@ ROUTES: list[tuple[str, str, Permission]] = [
 
 PLATFORM_ROUTES: list[tuple[str, str]] = [
     ("POST", "/platform/break-glass"),
+]
+
+# Routes any authenticated caller may reach; they only ever describe the caller themselves.
+SELF_ROUTES: list[tuple[str, str]] = [
+    ("GET", "/me"),
 ]
 
 
@@ -99,6 +105,13 @@ def platform_route_table() -> list[dict]:
     return [
         {"method": method, "pattern": path_pattern(template)}
         for method, template in PLATFORM_ROUTES
+    ]
+
+
+def self_route_table() -> list[dict]:
+    return [
+        {"method": method, "pattern": path_pattern(template)}
+        for method, template in SELF_ROUTES
     ]
 
 
