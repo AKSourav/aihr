@@ -36,6 +36,17 @@ class Settings(BaseSettings):
     keycloak_realm: str = "aihr"
     keycloak_audience: str = "aihr-api"
 
+    public_base_url: str = "http://localhost:8000"
+    invite_signing_key: str = ""
+    invite_ttl_hours: int = 72
+
+    smtp_host: str = ""
+    smtp_port: int = 1025
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_starttls: bool = False
+    smtp_from: str = "aihr <no-reply@aihr.local>"
+
     dev_routes_enabled: bool = False
 
     call_mode: str = "web"

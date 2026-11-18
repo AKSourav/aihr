@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<body style="margin:0;padding:24px;background:#f4f5f7;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1d2433;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border-radius:12px;padding:32px;">
+        <tr><td>
+          <p style="margin:0 0 16px;font-size:16px;">Hi {{ first_name }},</p>
+          <p style="margin:0 0 16px;font-size:15px;line-height:1.5;">
+            Thanks for applying for the <strong>{{ job_title }}</strong> role at {{ company_name }}.
+            The next step is a short screening conversation (about {{ max_minutes }} minutes) with our
+            AI hiring assistant. You can take it from your browser whenever it suits you; you will need a microphone.
+          </p>
+          <p style="margin:24px 0;">
+            <a href="{{ join_url }}" style="display:inline-block;background:#2f5bd3;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 24px;border-radius:8px;">Join the screening call</a>
+          </p>
+          <p style="margin:0 0 16px;font-size:13px;color:#5b6475;line-height:1.5;">
+            This link is personal to you and works until {{ expires_at }}.<br>
+            If the button does not work, paste this address into your browser:<br>
+            <span style="word-break:break-all;">{{ join_url }}</span>
+          </p>
+          <p style="margin:0;font-size:13px;color:#5b6475;line-height:1.5;">
+            The assistant is an AI, not a person. It will ask a few questions about your experience and
+            availability, and answer common questions about the role. The {{ company_name }} team reviews
+            every conversation and will follow up with you.
+          </p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>
