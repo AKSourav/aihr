@@ -76,6 +76,13 @@ Route-to-permission mapping lives in `packages/core/permissions.py` and is expor
 
 The first enforcing deploy of edge authorization is the most likely outage in this design. Do not skip the dry run.
 
+## Public and self routes
+
+Two kinds of route sit outside the per-tenant permission table:
+
+- **`GET /me`** returns the caller's memberships and permissions. The desktop app uses it to pick an org and to hide actions the caller's role lacks. It lives in `SELF_ROUTES` in `packages/core/permissions.py` and is exported into the bundle as `self_routes`. OPA admits any verified subject to it. The response only ever describes the caller.
+- **`/join/{token}` and `/public/invites/{token}[/join]`** are the candidate's email-invite pages. They are served on a separate `aihr-public` HTTPRoute that the `aihr-authn` SecurityPolicy does not target, because candidates have no Keycloak account. The credential is the invite token: a JWT signed with `INVITE_SIGNING_KEY`, scoped to one call, and expiring with the invite. Calling `join` creates the LiveKit room and dispatches the agent the first time it succeeds; reloads rejoin the same room. The route carries the same rate limit as the API.
+
 ## Break-glass
 
 `is_platform_admin` does **not** grant tenant data access on its own. A platform admin with no membership gets 404 on every tenant route, exactly like any other stranger.

@@ -32,6 +32,32 @@ spec:
         - path:
             type: PathPrefix
             value: /platform
+        - path:
+            type: Exact
+            value: /me
+      backendRefs:
+        - name: aihr-api
+          port: 8000
+---
+# Candidate-facing invite pages. Deliberately outside aihr-authn: candidates have no Keycloak
+# account, and the signed invite token in the path is the credential.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: aihr-public
+spec:
+  parentRefs:
+    - name: aihr
+  hostnames:
+    - api.aihr.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /join/
+        - path:
+            type: PathPrefix
+            value: /public/invites/
       backendRefs:
         - name: aihr-api
           port: 8000
@@ -76,6 +102,9 @@ spec:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       name: aihr-api
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: aihr-public
   rateLimit:
     type: Global
     global:

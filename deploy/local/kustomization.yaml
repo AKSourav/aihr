@@ -52,6 +52,12 @@ patches:
       - op: remove
         path: /spec/hostnames
   - target:
+      kind: HTTPRoute
+      name: aihr-public
+    patch: |
+      - op: remove
+        path: /spec/hostnames
+  - target:
       kind: SecurityPolicy
       name: aihr-authn
     patch: |

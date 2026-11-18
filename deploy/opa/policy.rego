@@ -29,6 +29,12 @@ platform_matched contains r if {
 	regex.match(r.pattern, path)
 }
 
+self_matched contains r if {
+	some r in data.self_routes
+	r.method == method
+	regex.match(r.pattern, path)
+}
+
 allow if {
 	subject in data.platform_admins
 	count(matched) > 0
@@ -45,9 +51,16 @@ allow if {
 	r.permission in data.role_permissions[role]
 }
 
+# Self routes describe only the caller, so any subject Envoy verified may reach them.
+allow if {
+	subject != ""
+	count(self_matched) > 0
+}
+
 reason := "no matching route" if {
 	count(matched) == 0
 	count(platform_matched) == 0
+	count(self_matched) == 0
 } else := "allowed" if {
 	allow
 } else := "denied"
