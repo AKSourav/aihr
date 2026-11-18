@@ -33,6 +33,9 @@ ORG="$(kubectl exec -n "$NAMESPACE" deployment/postgres -- \
   psql -U app -d hr -tAc "select id from organizations where name = 'Acme Fintech'" | tr -d '[:space:]')"
 OTHER="00000000-0000-0000-0000-0000000000ff"
 
+BG_OPEN="{\"org_id\":\"$ORG\",\"reason\":\"verification run from k3d-verify\"}"
+BG_DENIED="{\"org_id\":\"$ORG\",\"reason\":\"should not be permitted\"}"
+
 RECRUITER="$(token_for recruiter)"
 VIEWER="$(token_for viewer)"
 ROOT_TOKEN="$(token_for root)"
@@ -69,14 +72,12 @@ check "platform admin without break-glass is refused" 404 \
   "$(status -H "Authorization: Bearer $ROOT_TOKEN" "$BASE/tenants/$ORG/applications")"
 check "platform admin may open break-glass" 200 \
   "$(status -H "Authorization: Bearer $ROOT_TOKEN" -X POST -H 'Content-Type: application/json' \
-     -d "{\"org_id\":\"$ORG\",\"reason\":\"verification run from k3d-verify\"}" \
-     "$BASE/platform/break-glass")"
+     -d "$BG_OPEN" "$BASE/platform/break-glass")"
 check "platform admin reads the tenant after break-glass" 200 \
   "$(status -H "Authorization: Bearer $ROOT_TOKEN" "$BASE/tenants/$ORG/applications")"
 check "recruiter may not open break-glass" 404 \
   "$(status -H "Authorization: Bearer $RECRUITER" -X POST -H 'Content-Type: application/json' \
-     -d "{\"org_id\":\"$ORG\",\"reason\":\"should not be permitted\"}" \
-     "$BASE/platform/break-glass")"
+     -d "$BG_DENIED" "$BASE/platform/break-glass")"
 
 printf '\n\033[1mInternal surface is not routed\033[0m\n'
 check "internal bundle endpoint is unreachable via gateway" 404 \

@@ -1,5 +1,10 @@
+USER = recruiter
+
 up:            ; docker compose up -d --build
 down:          ; docker compose down
+dev:           ; ./scripts/dev-up.sh
+dev-token:     ; @docker compose exec -T api python -m scripts.get_token --username $(USER) --password $(USER)
+dev-verify:    ; ./scripts/dev-verify.sh
 migrate:       ; docker compose run --rm api alembic upgrade head
 seed:          ; docker compose run --rm api python -m scripts.seed
 reset:         ; docker compose down -v && make up migrate seed

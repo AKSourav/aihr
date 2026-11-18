@@ -75,6 +75,8 @@
       "id": "11111111-1111-1111-1111-111111111111",
       "username": "recruiter",
       "email": "recruiter@acme.test",
+      "firstName": "Reena",
+      "lastName": "Recruiter",
       "emailVerified": true,
       "enabled": true,
       "credentials": [{ "type": "password", "value": "recruiter", "temporary": false }]
@@ -83,6 +85,8 @@
       "id": "22222222-2222-2222-2222-222222222222",
       "username": "viewer",
       "email": "viewer@acme.test",
+      "firstName": "Vijay",
+      "lastName": "Viewer",
       "emailVerified": true,
       "enabled": true,
       "credentials": [{ "type": "password", "value": "viewer", "temporary": false }]
@@ -91,6 +95,8 @@
       "id": "33333333-3333-3333-3333-333333333333",
       "username": "root",
       "email": "root@aihr.test",
+      "firstName": "Root",
+      "lastName": "Operator",
       "emailVerified": true,
       "enabled": true,
       "realmRoles": ["platform_admin"],
@@ -100,6 +106,8 @@
       "id": "44444444-4444-4444-4444-444444444444",
       "username": "outsider",
       "email": "outsider@nowhere.test",
+      "firstName": "Olly",
+      "lastName": "Outsider",
       "emailVerified": true,
       "enabled": true,
       "credentials": [{ "type": "password", "value": "outsider", "temporary": false }]
