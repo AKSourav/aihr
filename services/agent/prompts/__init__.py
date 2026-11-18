@@ -2,7 +2,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from core.schemas import CallContext, FaqItem, QuestionItem
+from core.schemas import CallContext, CallMode, FaqItem, QuestionItem
 
 _env = Environment(loader=FileSystemLoader(Path(__file__).parent))
 
@@ -28,6 +28,7 @@ def render_system_prompt(call_context: CallContext) -> str:
         job_title=call_context.job_title,
         candidate_first_name=call_context.candidate_first_name,
         max_minutes=call_context.max_minutes,
+        joined_from_invite=call_context.call_mode == CallMode.email,
         questions_block=_render_questions(call_context.question_plan.questions),
         faq_block=_render_faq(call_context.question_plan.faq),
     )
