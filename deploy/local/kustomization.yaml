@@ -1,0 +1,76 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: aihr
+
+resources:
+  - infra.yaml
+  - keycloak.yaml
+  - app.yaml
+  - ../k8s/opa.yaml
+  - ../k8s/gateway.yaml
+
+configMapGenerator:
+  - name: opa-policy
+    files:
+      - policy.rego=../opa/policy.rego
+  - name: opa-config
+    files:
+      - config.yaml=../k8s/opa-config.yaml
+  - name: keycloak-realm
+    files:
+      - realm-aihr-local.json=realm-aihr-local.json
+
+patches:
+  - target:
+      kind: Deployment
+      name: opa
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  - target:
+      kind: Gateway
+      name: aihr
+    patch: |
+      - op: replace
+        path: /spec/listeners
+        value:
+          - name: http
+            protocol: HTTP
+            port: 80
+            allowedRoutes:
+              namespaces:
+                from: Same
+  - target:
+      kind: HTTPRoute
+      name: aihr-api
+    patch: |
+      - op: remove
+        path: /spec/hostnames
+  - target:
+      kind: SecurityPolicy
+      name: aihr-authn
+    patch: |
+      - op: replace
+        path: /spec/jwt/providers/0/issuer
+        value: http://keycloak:8080/realms/aihr
+      - op: replace
+        path: /spec/jwt/providers/0/remoteJWKS/uri
+        value: http://keycloak.aihr.svc.cluster.local:8080/realms/aihr/protocol/openid-connect/certs
+  - target:
+      kind: BackendTrafficPolicy
+      name: aihr-ratelimit
+    patch: |
+      - op: replace
+        path: /spec/rateLimit
+        value:
+          type: Local
+          local:
+            rules:
+              - limit:
+                  requests: 600
+                  unit: Minute

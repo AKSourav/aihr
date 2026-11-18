@@ -9,5 +9,8 @@ dispatch:      ; PYTHONPATH=.:./packages .venv/bin/python -m scripts.dev_dispatc
 call:          ; DATABASE_URL=postgresql+asyncpg://app:app@localhost:5432/hr TEMPORAL_ADDRESS=localhost:7233 PYTHONPATH=.:./packages .venv/bin/python -m scripts.start_call $(ARGS)
 link:          ; DATABASE_URL=postgresql+asyncpg://app:app@localhost:5432/hr PYTHONPATH=.:./packages .venv/bin/python -m scripts.join_link $(ARGS)
 webtest:       ; cd scripts/web_test && python3 -m http.server 8080     # serves the local join-token test page
+k3d-up:        ; ./scripts/k3d-up.sh
+k3d-verify:    ; ./scripts/k3d-verify.sh
+k3d-down:      ; ./scripts/k3d-down.sh
 test:          ; docker compose run --rm api pytest tests/unit
 eval-summaries: ; PYTHONPATH=.:./packages .venv/bin/python -m scripts.eval_summaries
