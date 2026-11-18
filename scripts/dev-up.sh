@@ -63,7 +63,8 @@ cat <<EOF
 $(printf '\033[1;32mCompose stack is up.\033[0m')
 
   API           http://localhost:$API_PORT
-  Keycloak      http://localhost:$KEYCLOAK_PORT  (admin / admin)
+  Keycloak      http://keycloak:$KEYCLOAK_PORT/admin  (admin / admin)
+                needs: echo '127.0.0.1 keycloak' | sudo tee -a /etc/hosts
   Tenant        $ORG_ID
 
   Users (password == username, client aihr-local-cli):
