@@ -1,4 +1,5 @@
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import jwt
@@ -7,6 +8,10 @@ from core.settings import get_settings
 
 ALGORITHM = "HS256"
 PURPOSE = "call_invite"
+
+# How long after expiry a genuine link still resolves, so it can forward a candidate to the
+# newer invite for the same application (re-sent invites, callbacks). Never to the old call.
+FORWARD_GRACE = timedelta(days=30)
 
 
 class InvalidInvite(Exception):
@@ -29,10 +34,20 @@ def issue_invite_token(call_id: UUID, expires_at: datetime) -> str:
     return jwt.encode(claims, _signing_key(), algorithm=ALGORITHM)
 
 
-def verify_invite_token(token: str) -> UUID:
+@dataclass(frozen=True)
+class InviteLink:
+    call_id: UUID
+    expired: bool
+
+
+def _decode(token: str, leeway: timedelta = timedelta(0)) -> dict:
     try:
         claims = jwt.decode(
-            token, _signing_key(), algorithms=[ALGORITHM], options={"require": ["sub", "exp"]}
+            token,
+            _signing_key(),
+            algorithms=[ALGORITHM],
+            options={"require": ["sub", "exp"]},
+            leeway=leeway,
         )
     except jwt.ExpiredSignatureError as exc:
         raise ExpiredInvite("invite has expired") from exc
@@ -41,10 +56,28 @@ def verify_invite_token(token: str) -> UUID:
 
     if claims.get("purpose") != PURPOSE:
         raise InvalidInvite("invalid invite")
+    return claims
+
+
+def _call_id(claims: dict) -> UUID:
     try:
         return UUID(claims["sub"])
     except ValueError as exc:
         raise InvalidInvite("invalid invite") from exc
+
+
+def verify_invite_token(token: str) -> UUID:
+    """The call a still-valid invite token was issued for."""
+    return _call_id(_decode(token))
+
+
+def read_invite_token(token: str) -> InviteLink:
+    """Like verify_invite_token, but a genuine token stays readable for FORWARD_GRACE after it
+    expires, flagged as expired. Callers may only use an expired link to find the candidate's
+    current invite, never to join the call it was issued for."""
+    claims = _decode(token, leeway=FORWARD_GRACE)
+    expired = claims["exp"] <= datetime.now(timezone.utc).timestamp()
+    return InviteLink(call_id=_call_id(claims), expired=expired)
 
 
 def invite_url(token: str) -> str:

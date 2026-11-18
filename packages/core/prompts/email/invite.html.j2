@@ -7,7 +7,12 @@
         <tr><td>
           <p style="margin:0 0 16px;font-size:16px;">Hi {{ first_name }},</p>
           <p style="margin:0 0 16px;font-size:15px;line-height:1.5;">
+            {% if reminder -%}
+            Here is a fresh link for your screening call for the <strong>{{ job_title }}</strong> role at
+            {{ company_name }}. Any earlier link we sent you will also take you to this call.
+            {%- else -%}
             Thanks for applying for the <strong>{{ job_title }}</strong> role at {{ company_name }}.
+            {%- endif %}
             The next step is a short screening conversation (about {{ max_minutes }} minutes) with our
             AI hiring assistant. You can take it from your browser whenever it suits you; you will need a microphone.
           </p>

@@ -46,3 +46,21 @@ def test_html_part_escapes_candidate_supplied_values():
 
     assert "<script>x</script>" not in html
     assert "&lt;script&gt;" in html
+
+
+def test_a_first_invite_is_not_labelled_a_reminder():
+    message = render_invite(invite())
+    text, _ = parts(message)
+
+    assert not message["Subject"].startswith("Reminder")
+    assert text.startswith("Hi Asha,\n\nThanks for applying for the Senior Backend Engineer role at Acme Fintech.\n\nThe next step")
+
+
+def test_a_reinvite_is_a_reminder_that_says_earlier_links_still_work():
+    message = render_invite(invite(reminder=True))
+    text, html = parts(message)
+
+    assert message["Subject"] == "Reminder: Acme Fintech: screening call for Senior Backend Engineer"
+    assert "Any earlier link we sent you will also take you to this call." in text
+    assert "Any earlier link we sent you will also take you to this call." in " ".join(html.split())
+    assert "http://localhost:8000/join/tok123" in text

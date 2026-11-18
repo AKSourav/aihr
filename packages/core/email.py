@@ -29,6 +29,8 @@ class Invite:
     join_url: str
     expires_at: datetime
     max_minutes: int
+    # A re-sent invite (earlier link unused, or the candidate asked for a callback).
+    reminder: bool = False
 
 
 def render_invite(invite: Invite) -> EmailMessage:
@@ -39,9 +41,11 @@ def render_invite(invite: Invite) -> EmailMessage:
         "join_url": invite.join_url,
         "expires_at": invite.expires_at.astimezone(DISPLAY_TZ).strftime("%d %b %Y, %I:%M %p IST"),
         "max_minutes": invite.max_minutes,
+        "reminder": invite.reminder,
     }
     message = EmailMessage()
-    message["Subject"] = f"{invite.company_name}: screening call for {invite.job_title}"
+    subject = f"{invite.company_name}: screening call for {invite.job_title}"
+    message["Subject"] = f"Reminder: {subject}" if invite.reminder else subject
     message["From"] = get_settings().smtp_from
     message["To"] = invite.to_email
     message.set_content(_env.get_template("invite.txt.j2").render(**context))

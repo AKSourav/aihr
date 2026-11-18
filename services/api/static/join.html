@@ -70,6 +70,7 @@
         <li>Your browser will ask to use your microphone.</li>
         <li>You can ask questions about the role at the end.</li>
       </ul>
+      <p class="muted" id="forwarded" hidden>You opened a link from an earlier email. That's fine: it takes you to your current invite.</p>
       <p class="muted" id="expiry"></p>
       <div class="row"><button id="join-btn">Join the call</button></div>
       <p id="join-error" class="error" hidden></p>
@@ -135,6 +136,7 @@
             new Date(invite.expires_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) + ".";
         }
         if (invite.state === "in_progress") $("join-btn").textContent = "Rejoin the call";
+        $("forwarded").hidden = !invite.forwarded;
         show("lobby");
       }
 

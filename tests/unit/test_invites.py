@@ -10,6 +10,7 @@ from core.invites import (
     invite_url,
     is_expired,
     issue_invite_token,
+    read_invite_token,
     verify_invite_token,
 )
 from core.settings import get_settings
@@ -89,3 +90,36 @@ def test_is_expired():
     assert is_expired(in_hours(-1))
     assert not is_expired(in_hours(1))
     assert not is_expired(None)
+
+
+def test_read_flags_a_recently_expired_token_without_rejecting_it():
+    call_id = uuid.uuid4()
+    link = read_invite_token(issue_invite_token(call_id, in_hours(-48)))
+
+    assert link.call_id == call_id
+    assert link.expired is True
+
+
+def test_read_reports_a_live_token_as_not_expired():
+    assert read_invite_token(issue_invite_token(uuid.uuid4(), in_hours(1))).expired is False
+
+
+def test_read_rejects_a_token_past_the_forwarding_grace():
+    with pytest.raises(ExpiredInvite):
+        read_invite_token(issue_invite_token(uuid.uuid4(), in_hours(-31 * 24)))
+
+
+def test_read_still_rejects_forged_tokens():
+    forged = jwt.encode(
+        {"sub": str(uuid.uuid4()), "purpose": "call_invite", "exp": int(in_hours(-1).timestamp())},
+        "x" * 32,
+        algorithm="HS256",
+    )
+
+    with pytest.raises(InvalidInvite):
+        read_invite_token(forged)
+
+
+def test_verify_still_rejects_any_expired_token():
+    with pytest.raises(ExpiredInvite):
+        verify_invite_token(issue_invite_token(uuid.uuid4(), in_hours(-48)))

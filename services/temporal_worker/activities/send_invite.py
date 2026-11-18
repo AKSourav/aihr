@@ -66,6 +66,7 @@ async def send_invite(input: SendInviteInput) -> None:
                 join_url=invite_url(token),
                 expires_at=expires_at,
                 max_minutes=int(job.question_plan.get("max_minutes", settings.max_call_duration_min)),
+                reminder=input.attempt_no > 1,
             )
         )
         await asyncio.to_thread(send_email, message)

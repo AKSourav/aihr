@@ -184,14 +184,129 @@ async def test_a_finished_call_cannot_be_joined(client, session, application, di
     assert dispatched == []
 
 
-async def test_an_expired_invite_is_gone(client, session, application, dispatched):
-    expired_row = await make_call(session, application, status="expired")
-    past_deadline = await make_call(session, application, invite_expires_at=in_hours(-1))
-    expired_token = await make_call(session, application)
+async def new_application(session: AsyncSession, two_tenants) -> Application:
+    application = Application(
+        id=uuid.uuid4(),
+        org_id=two_tenants["org_a"],
+        candidate_id=two_tenants["candidate_a"],
+        job_id=two_tenants["job_a"],
+        stage="shortlisted",
+    )
+    session.add(application)
+    await session.flush()
+    return application
+
+
+async def test_an_expired_invite_is_gone(client, session, two_tenants, dispatched):
+    # Each on its own application, so there is no newer invite to forward to.
+    expired_row = await make_call(session, await new_application(session, two_tenants), status="expired")
+    past_deadline = await make_call(
+        session, await new_application(session, two_tenants), invite_expires_at=in_hours(-1)
+    )
+    expired_token = await make_call(session, await new_application(session, two_tenants))
 
     assert (await client.post(f"/public/invites/{token_for(expired_row)}/join")).status_code == 410
     assert (await client.post(f"/public/invites/{token_for(past_deadline)}/join")).status_code == 410
     assert (await client.post(f"/public/invites/{token_for(expired_token, -1)}/join")).status_code == 410
+    assert dispatched == []
+
+
+async def test_an_old_expired_link_takes_the_candidate_to_the_current_invite(
+    client, session, application, dispatched, temporal
+):
+    first = await make_call(session, application, attempt_no=1, status="expired", invite_expires_at=in_hours(-1))
+    reminder = await make_call(session, application, attempt_no=2)
+    old_link = token_for(first, -1)
+
+    info = await client.get(f"/public/invites/{old_link}")
+    joined = await client.post(f"/public/invites/{old_link}/join")
+
+    assert info.status_code == 200
+    assert info.json()["state"] == "ready"
+    assert info.json()["forwarded"] is True
+    assert joined.status_code == 200
+    assert joined.json()["room_name"] == f"call-{reminder.id}"
+    assert dispatched == [str(reminder.id)], "the agent goes to the current call only"
+    signals = [c for c in temporal.calls if c[0] == "signal"]
+    assert signals == [("signal", "call_joined", str(reminder.id))]
+
+    await session.refresh(first)
+    await session.refresh(reminder)
+    assert first.status == "expired" and first.room_name is None
+    assert reminder.status == "in_progress"
+    audit = await session.scalar(
+        select(AuditEvent).where(AuditEvent.entity_id == reminder.id, AuditEvent.event_type == "invite_joined")
+    )
+    assert audit is not None
+    assert audit.payload == {"via_link_for_call_id": str(first.id)}
+
+
+async def test_a_link_from_before_a_callback_request_forwards(client, session, application, dispatched):
+    earlier = await make_call(session, application, attempt_no=1, status="callback_requested")
+    current = await make_call(session, application, attempt_no=2)
+
+    response = await client.post(f"/public/invites/{token_for(earlier)}/join")
+
+    assert response.status_code == 200
+    assert dispatched == [str(current.id)]
+
+
+async def test_an_old_link_rejoins_the_call_already_in_progress(client, session, application, dispatched):
+    first = await make_call(session, application, attempt_no=1, status="expired", invite_expires_at=in_hours(-1))
+    live = await make_call(session, application, attempt_no=2, status="in_progress", room_name="call-live")
+
+    response = await client.post(f"/public/invites/{token_for(first, -1)}/join")
+
+    assert response.status_code == 200
+    assert response.json()["room_name"] == "call-live"
+    assert dispatched == [], "the agent is already in that room"
+    await session.refresh(live)
+    assert live.status == "in_progress"
+
+
+async def test_the_current_link_is_not_marked_forwarded(client, session, application):
+    await make_call(session, application, attempt_no=1, status="expired", invite_expires_at=in_hours(-1))
+    current = await make_call(session, application, attempt_no=2)
+
+    response = await client.get(f"/public/invites/{token_for(current)}")
+
+    assert response.json()["forwarded"] is False
+
+
+async def test_an_old_link_with_nothing_newer_keeps_its_own_answer(client, session, two_tenants, dispatched):
+    expired = await make_call(
+        session, await new_application(session, two_tenants), status="expired", invite_expires_at=in_hours(-1)
+    )
+    finished = await make_call(session, await new_application(session, two_tenants), status="completed")
+
+    assert (await client.get(f"/public/invites/{token_for(expired, -1)}")).status_code == 410
+    assert (await client.get(f"/public/invites/{token_for(finished)}")).json()["state"] == "finished"
+    assert (await client.post(f"/public/invites/{token_for(finished)}/join")).status_code == 409
+    assert dispatched == []
+
+
+async def test_an_expired_newer_invite_is_not_a_target(client, session, application, dispatched):
+    first = await make_call(session, application, attempt_no=1, status="expired", invite_expires_at=in_hours(-80))
+    await make_call(session, application, attempt_no=2, invite_expires_at=in_hours(-1))
+
+    assert (await client.post(f"/public/invites/{token_for(first, -80)}/join")).status_code == 410
+    assert dispatched == []
+
+
+async def test_links_never_cross_applications(client, session, two_tenants, application, dispatched):
+    first = await make_call(session, application, status="expired", invite_expires_at=in_hours(-1))
+    other_application = await new_application(session, two_tenants)
+    await make_call(session, other_application)
+
+    assert (await client.post(f"/public/invites/{token_for(first, -1)}/join")).status_code == 410
+    assert dispatched == []
+
+
+async def test_a_link_long_past_expiry_no_longer_forwards(client, session, application, dispatched):
+    first = await make_call(session, application, attempt_no=1, status="expired", invite_expires_at=in_hours(-31 * 24))
+    await make_call(session, application, attempt_no=2)
+
+    assert (await client.post(f"/public/invites/{token_for(first, -31 * 24)}/join")).status_code == 410
     assert dispatched == []
 
 
