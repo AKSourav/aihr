@@ -1,0 +1,17 @@
+{
+  "name": "aihr-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Recruiter desktop app for aihr: review applications, screening calls and summaries, and send email screening invites.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check src/main.js && node --check src/auth.js && node --check src/preload.js && node --check src/renderer/app.js"
+  },
+  "devDependencies": {
+    "electron": "33.2.1"
+  },
+  "allowScripts": {
+    "electron@33.2.1": true
+  }
+}
