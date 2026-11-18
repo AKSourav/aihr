@@ -8,6 +8,20 @@ class ScreeningCallInput:
     skip_business_hours: bool = False
     fast_retries: bool = False
     signal_timeout_min: int = 45
+    invite_ttl_hours: int = 72
+
+
+@dataclass
+class SendInviteInput:
+    call_id: str
+    application_id: str
+    attempt_no: int
+    ttl_hours: int
+
+
+@dataclass
+class ExpireInviteInput:
+    call_id: str
 
 
 @dataclass
