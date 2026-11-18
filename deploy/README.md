@@ -32,6 +32,8 @@ Both of these were hit while bringing the cluster up, and both are about image a
 
 `agent-worker` is deliberately not deployed — it needs LiveKit, Deepgram and Cartesia credentials and would crashloop without them. Compose keeps it behind the `agent` profile for the same reason. Everything the auth path touches is there.
 
+The admin console is exempt: `KC_HOSTNAME_ADMIN` points it at `http://localhost:8080`, because the pinned hostname would otherwise redirect a browser to a name only containers can resolve. Reach it with `kubectl port-forward -n aihr svc/keycloak 8080:8080`.
+
 Keycloak's issuer is pinned to `http://keycloak:8080` via `KC_HOSTNAME`. Tokens are therefore minted with `iss: http://keycloak:8080/realms/aihr`, which is what the API expects and what Envoy validates, so tokens must be requested from inside the cluster — `scripts/get_token.py` does that through `kubectl exec`. Requesting one from the host against a different hostname would produce a token every component correctly rejects.
 
 ## Layout

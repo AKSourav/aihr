@@ -41,6 +41,8 @@ curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/tenants/$ORG_ID/
 
 `make dev-token` runs `scripts/get_token.py` through `docker compose exec`, so it resolves `keycloak` by service name.
 
+The admin console is the one thing that must *not* follow the pinned hostname — Keycloak would redirect the browser to `http://keycloak:8080/admin/`, which no host can resolve. `KC_HOSTNAME_ADMIN` keeps the console on `http://localhost:8080` while tokens keep the `keycloak:8080` issuer.
+
 The realm in `deploy/dev/realm-aihr-local.json` is imported **only when the realm does not already exist**, and Keycloak keeps it in a volume. After editing that file, drop the volume or the change is silently ignored:
 
 ```
