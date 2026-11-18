@@ -4,7 +4,7 @@ Identity, edge policy and gateway config for the API. See issue #3 for the desig
 
 ## Running it locally
 
-Docker Compose runs the application but **not** the gateway: Envoy Gateway is a Kubernetes controller that generates Envoy config from Gateway API CRDs, so there is nothing for it to do without a cluster. To exercise the real request path, use k3d.
+Docker Compose runs the application — including real login and real role enforcement — but **not** the gateway: Envoy Gateway is a Kubernetes controller that generates Envoy config from Gateway API CRDs, so there is nothing for it to do without a cluster. Compose is the inner loop (`make dev`); use k3d to exercise the real request path.
 
 ```
 ./scripts/k3d-up.sh        # cluster, Envoy Gateway, the whole stack, migrated and seeded
@@ -14,7 +14,7 @@ Docker Compose runs the application but **not** the gateway: Envoy Gateway is a 
 
 `deploy/local/` is a kustomize overlay over the **same** `k8s/` manifests this directory ships, patched for local use: HTTP listener instead of HTTPS, in-cluster Keycloak issuer, and a local rate limit instead of the global one (which needs a separate ratelimit service). The overlay builds with `--load-restrictor=LoadRestrictionsNone` because it reads `../opa/policy.rego` and `../k8s/*` from outside its own root.
 
-`deploy/local/realm-aihr-local.json` adds what production must never have: an `aihr-local-cli` client with the password grant enabled, and four fixed-ID users so memberships can be granted deterministically.
+`deploy/dev/realm-aihr-local.json` adds what production must never have: an `aihr-local-cli` client with the password grant enabled, and four fixed-ID users so memberships can be granted deterministically. It sits outside both `local/` and `keycloak/` because Compose and k3d share it — Compose mounts the file, kustomize generates a ConfigMap from it.
 
 | User | Password | Access |
 | --- | --- | --- |
@@ -30,7 +30,9 @@ Both of these were hit while bringing the cluster up, and both are about image a
 - **Use the `-static` OPA tags, not the default ones.** `openpolicyagent/opa:1.4.2-envoy` publishes **only** `linux/amd64`, so on Apple Silicon the image cannot run — the k3d nodes carry no qemu binfmt, so emulation is not a fallback. `openpolicyagent/opa:1.4.2-envoy-static` is multi-arch (`amd64` + `arm64`), has the same `/opa` entrypoint, and still starts the `envoy_ext_authz_grpc` plugin. CI uses `1.4.2-static` for `opa check` and `opa test` for the same reason, so the same command runs natively on either architecture.
 - **`minio/minio` is no longer pullable** — Docker Hub reports `pull access denied` and lists no tags, and `quay.io/minio/minio` is unavailable too. The local overlay therefore uses `chainguard/minio`, which is a drop-in: same `/usr/bin/minio` entrypoint, same arguments, and it still ships `mc` for bucket creation. It runs as UID 65532, hence the `fsGroup` on the pod. `docker-compose.yml` had the same problem on both `minio` and `minio-init` (which used `minio/mc:latest`) and now uses the same image; `mc` ships inside it, so the bucket and retention setup is unchanged.
 
-`agent-worker` is deliberately not deployed — it needs LiveKit, Deepgram and Cartesia credentials and would crashloop without them. Everything the auth path touches is there.
+`agent-worker` is deliberately not deployed — it needs LiveKit, Deepgram and Cartesia credentials and would crashloop without them. Compose keeps it behind the `agent` profile for the same reason. Everything the auth path touches is there.
+
+The admin console inherits the pinned hostname — it redirects to `http://keycloak:8080` and calls the Admin API there — so reaching it needs `127.0.0.1 keycloak` in the host's `/etc/hosts`, plus `kubectl port-forward -n aihr svc/keycloak 8080:8080` under k3d. `KC_HOSTNAME_ADMIN` does not substitute: it relocates the console but not the API base it calls.
 
 Keycloak's issuer is pinned to `http://keycloak:8080` via `KC_HOSTNAME`. Tokens are therefore minted with `iss: http://keycloak:8080/realms/aihr`, which is what the API expects and what Envoy validates, so tokens must be requested from inside the cluster — `scripts/get_token.py` does that through `kubectl exec`. Requesting one from the host against a different hostname would produce a token every component correctly rejects.
 
@@ -38,7 +40,8 @@ Keycloak's issuer is pinned to `http://keycloak:8080` via `KC_HOSTNAME`. Tokens 
 
 | Path | What it is |
 | --- | --- |
-| `keycloak/realm-aihr.json` | Realm import, loaded by the compose `keycloak` service and reproducible in any environment |
+| `keycloak/realm-aihr.json` | The deployable realm: clients and roles, no users and no password grant |
+| `dev/realm-aihr-local.json` | The local realm, shared by Compose and k3d: adds the CLI client and four fixed-ID users |
 | `opa/policy.rego` | The authorization policy. Single source — kustomize generates the ConfigMap from this file |
 | `opa/policy_test.rego` | Policy tests, run by `opa test` in CI |
 | `k8s/opa.yaml` | OPA deployment and service, exposing ext_authz on gRPC 9191 |
