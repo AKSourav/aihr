@@ -33,9 +33,15 @@
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "implicitFlowEnabled": false,
-      "redirectUris": ["http://localhost:3000/*"],
-      "webOrigins": ["http://localhost:3000"],
-      "attributes": { "pkce.code.challenge.method": "S256" },
+      "redirectUris": [
+        "http://localhost:3000/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3000"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
       "protocolMappers": [
         {
           "name": "aihr-api-audience",
@@ -68,6 +74,17 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "aihr-admin",
+      "name": "aihr account administration (service account)",
+      "enabled": true,
+      "publicClient": false,
+      "bearerOnly": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "secret": "local-admin-secret"
     }
   ],
   "users": [
@@ -79,7 +96,13 @@
       "lastName": "Recruiter",
       "emailVerified": true,
       "enabled": true,
-      "credentials": [{ "type": "password", "value": "recruiter", "temporary": false }]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "recruiter",
+          "temporary": false
+        }
+      ]
     },
     {
       "id": "22222222-2222-2222-2222-222222222222",
@@ -89,7 +112,13 @@
       "lastName": "Viewer",
       "emailVerified": true,
       "enabled": true,
-      "credentials": [{ "type": "password", "value": "viewer", "temporary": false }]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "viewer",
+          "temporary": false
+        }
+      ]
     },
     {
       "id": "33333333-3333-3333-3333-333333333333",
@@ -99,8 +128,16 @@
       "lastName": "Operator",
       "emailVerified": true,
       "enabled": true,
-      "realmRoles": ["platform_admin"],
-      "credentials": [{ "type": "password", "value": "root", "temporary": false }]
+      "realmRoles": [
+        "platform_admin"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "root",
+          "temporary": false
+        }
+      ]
     },
     {
       "id": "44444444-4444-4444-4444-444444444444",
@@ -110,7 +147,49 @@
       "lastName": "Outsider",
       "emailVerified": true,
       "enabled": true,
-      "credentials": [{ "type": "password", "value": "outsider", "temporary": false }]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "outsider",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "id": "66666666-6666-6666-6666-666666666666",
+      "username": "owner",
+      "email": "hr@acme.test",
+      "firstName": "Hema",
+      "lastName": "Owner",
+      "emailVerified": true,
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "owner",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "service-account-aihr-admin",
+      "enabled": true,
+      "serviceAccountClientId": "aihr-admin",
+      "clientRoles": {
+        "realm-management": [
+          "manage-users",
+          "view-users"
+        ]
+      }
     }
-  ]
+  ],
+  "smtpServer": {
+    "host": "mailpit",
+    "port": "1025",
+    "from": "no-reply@aihr.test",
+    "fromDisplayName": "aihr (local)",
+    "auth": "false",
+    "ssl": "false",
+    "starttls": "false"
+  }
 }

@@ -89,6 +89,14 @@ def test_every_tenant_route_has_a_permission(monkeypatch):
             assert (method.upper(), template) in mapped, f"{method} {template} has no permission"
 
 
+def test_every_account_route_is_registered_in_the_app(monkeypatch):
+    paths = openapi_paths(monkeypatch, DEV_ROUTES_ENABLED="true", INTERNAL_API_TOKEN="tok")
+
+    for method, template, _ in ACCOUNT_ROUTES:
+        assert template in paths, f"{template} is mapped to a permission but not served"
+        assert method.lower() in paths[template]
+
+
 def test_every_account_route_has_a_permission(monkeypatch):
     paths = openapi_paths(monkeypatch, DEV_ROUTES_ENABLED="true", INTERNAL_API_TOKEN="tok")
     mapped = {(method, template) for method, template, _ in ACCOUNT_ROUTES}

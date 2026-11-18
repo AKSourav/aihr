@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     keycloak_url: str = ""
     keycloak_realm: str = "aihr"
     keycloak_audience: str = "aihr-api"
+    keycloak_admin_client_id: str = "aihr-admin"
+    keycloak_admin_client_secret: str = ""
 
     dev_routes_enabled: bool = False
 
