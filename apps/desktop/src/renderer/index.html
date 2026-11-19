@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'" />
+  <title>aihr</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="login" class="login" hidden>
+    <div class="login-card">
+      <div class="brand brand-lg"><span class="brand-mark">ai</span>hr</div>
+      <h1>Recruiter console</h1>
+      <p class="muted">Review candidates, screening calls and AI summaries, and send screening invites.</p>
+      <button id="login-btn" class="btn btn-primary btn-block">Sign in with Keycloak</button>
+      <p id="login-error" class="error" hidden></p>
+      <p id="login-env" class="fine"></p>
+    </div>
+  </div>
+
+  <div id="shell" class="shell" hidden>
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">ai</span>hr</div>
+      <label class="field-label" for="org-select">Organization</label>
+      <select id="org-select" class="select"></select>
+      <nav class="nav">
+        <a href="#/applications" class="nav-item active" data-nav="applications">Applications</a>
+      </nav>
+      <div class="sidebar-foot">
+        <div id="whoami" class="whoami"></div>
+        <button id="logout-btn" class="btn btn-ghost btn-sm">Sign out</button>
+      </div>
+    </aside>
+    <main id="view" class="view"></main>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

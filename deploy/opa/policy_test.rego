@@ -217,3 +217,44 @@ test_platform_admin_is_edge_allowed_on_account_routes if {
 		with data.routes as routes
 		with data.platform_routes as platform_routes
 }
+
+self_routes := [{"method": "GET", "pattern": "^/me$"}]
+
+test_any_verified_subject_may_read_me if {
+	authz.allow with input as request("sub-nobody", "GET", "/me")
+		with data.memberships as memberships
+		with data.platform_admins as platform_admins
+		with data.role_permissions as role_permissions
+		with data.routes as routes
+		with data.platform_routes as platform_routes
+		with data.self_routes as self_routes
+}
+
+test_me_requires_a_subject if {
+	not authz.allow with input as request("", "GET", "/me")
+		with data.memberships as memberships
+		with data.platform_admins as platform_admins
+		with data.role_permissions as role_permissions
+		with data.routes as routes
+		with data.platform_routes as platform_routes
+		with data.self_routes as self_routes
+}
+
+test_self_routes_allow_only_their_method if {
+	not authz.allow with input as request("sub-nobody", "POST", "/me")
+		with data.memberships as memberships
+		with data.platform_admins as platform_admins
+		with data.role_permissions as role_permissions
+		with data.routes as routes
+		with data.platform_routes as platform_routes
+		with data.self_routes as self_routes
+}
+
+test_policy_works_without_self_routes_in_the_bundle if {
+	authz.allow with input as request("sub-recruiter", "POST", "/tenants/org-a/calls")
+		with data.memberships as memberships
+		with data.platform_admins as platform_admins
+		with data.role_permissions as role_permissions
+		with data.routes as routes
+		with data.platform_routes as platform_routes
+}

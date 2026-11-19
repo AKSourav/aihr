@@ -33,9 +33,9 @@ Both of these were hit while bringing the cluster up, and both are about image a
 
 `agent-worker` is deliberately not deployed — it needs LiveKit, Deepgram and Cartesia credentials and would crashloop without them. Compose keeps it behind the `agent` profile for the same reason. Everything the auth path touches is there.
 
-The admin console inherits the pinned hostname — it redirects to `http://keycloak:8080` and calls the Admin API there — so reaching it needs `127.0.0.1 keycloak` in the host's `/etc/hosts`, plus `kubectl port-forward -n aihr svc/keycloak 8080:8080` under k3d. `KC_HOSTNAME_ADMIN` does not substitute: it relocates the console but not the API base it calls.
+The public issuer and the internal key URL are deliberately different. `KC_HOSTNAME` is `http://localhost:8080`, so every token is minted with `iss: http://localhost:8080/realms/aihr` regardless of which hostname requested it — reachable from a browser, the desktop app, or `kubectl port-forward -n aihr svc/keycloak 8080:8080`. The API validates that issuer via `KEYCLOAK_ISSUER_URL` while still fetching JWKS over cluster networking at `KEYCLOAK_URL`, and Envoy does the same split: `SecurityPolicy.jwt.providers[0].issuer` names the public value, `remoteJWKS.uri` the in-cluster Service.
 
-Keycloak's issuer is pinned to `http://keycloak:8080` via `KC_HOSTNAME`. Tokens are therefore minted with `iss: http://keycloak:8080/realms/aihr`, which is what the API expects and what Envoy validates, so tokens must be requested from inside the cluster — `scripts/get_token.py` does that through `kubectl exec`. Requesting one from the host against a different hostname would produce a token every component correctly rejects.
+**Those two must agree.** If `KC_HOSTNAME` and the `SecurityPolicy` issuer drift, every request through the gateway 401s, and only `scripts/k3d-verify.sh` would catch it.
 
 ## Layout
 
@@ -88,6 +88,13 @@ The entitlement decision is made twice on purpose. `account_context` resolves th
 One predicate carries the isolation property: every `org_id` in the body must come back from `SELECT id FROM organizations WHERE account_id = :account AND id = ANY(:ids)`. An id that is missing is refused without saying whether it exists elsewhere — distinguishing the two would enumerate another customer's tenants.
 
 `execute-actions-email` needs SMTP. The dev realm points at Mailpit (`http://localhost:8025`); without a mail server the invitation still succeeds and reports `invitation_email_sent: false` rather than failing.
+
+## Public and self routes
+
+Two kinds of route sit outside the per-tenant permission table:
+
+- **`GET /me`** returns the caller's memberships and permissions. The desktop app uses it to pick an org and to hide actions the caller's role lacks. It lives in `SELF_ROUTES` in `packages/core/permissions.py` and is exported into the bundle as `self_routes`. OPA admits any verified subject to it. The response only ever describes the caller.
+- **`/join/{token}` and `/public/invites/{token}[/join]`** are the candidate's email-invite pages. They are served on a separate `aihr-public` HTTPRoute that the `aihr-authn` SecurityPolicy does not target, because candidates have no Keycloak account. The credential is the invite token: a JWT signed with `INVITE_SIGNING_KEY`, scoped to one call, and expiring with the invite. Calling `join` creates the LiveKit room and dispatches the agent the first time it succeeds; reloads rejoin the same room. The route carries the same rate limit as the API.
 
 ## Break-glass
 

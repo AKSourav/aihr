@@ -11,6 +11,7 @@ class CallMode(str, Enum):
     web = "web"
     sim = "sim"
     sip = "sip"
+    email = "email"
 
 
 class FaqItem(BaseModel):

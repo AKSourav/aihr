@@ -39,7 +39,7 @@ async def entrypoint(ctx: JobContext) -> None:
     call_context = await fetch_call_context(call_id)
     settings = get_settings()
 
-    if call_context.call_mode == CallMode.web:
+    if call_context.call_mode in (CallMode.web, CallMode.email):
         try:
             await asyncio.wait_for(ctx.wait_for_participant(), timeout=WEB_JOIN_TIMEOUT_S)
         except asyncio.TimeoutError:

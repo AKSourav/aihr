@@ -19,12 +19,18 @@ LEEWAY_SECONDS = 30
 
 def issuer() -> str:
     settings = get_settings()
+    base = settings.keycloak_issuer_url or settings.keycloak_url
+    return f"{base}/realms/{settings.keycloak_realm}"
+
+
+def realm_url() -> str:
+    settings = get_settings()
     return f"{settings.keycloak_url}/realms/{settings.keycloak_realm}"
 
 
 @lru_cache
 def jwk_client() -> PyJWKClient:
-    return PyJWKClient(f"{issuer()}/protocol/openid-connect/certs")
+    return PyJWKClient(f"{realm_url()}/protocol/openid-connect/certs")
 
 
 def decode_token(token: str) -> dict:

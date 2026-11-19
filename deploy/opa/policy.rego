@@ -29,6 +29,12 @@ platform_matched contains r if {
 	regex.match(r.pattern, path)
 }
 
+self_matched contains r if {
+	some r in data.self_routes
+	r.method == method
+	regex.match(r.pattern, path)
+}
+
 allow if {
 	subject in data.platform_admins
 	count(matched) > 0
@@ -47,6 +53,11 @@ allow if {
 }
 
 allow if {
+	subject != ""
+	count(self_matched) > 0
+}
+
+allow if {
 	some r in matched
 	r.scope == "account"
 	capture_of(r.pattern) in data.account_access[subject]
@@ -55,6 +66,7 @@ allow if {
 reason := "no matching route" if {
 	count(matched) == 0
 	count(platform_matched) == 0
+	count(self_matched) == 0
 } else := "allowed" if {
 	allow
 } else := "denied"

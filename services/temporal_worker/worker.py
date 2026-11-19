@@ -8,6 +8,7 @@ from core.logging import configure_logging
 from core.settings import get_settings
 from services.temporal_worker.activities.mark_unreachable import mark_unreachable
 from services.temporal_worker.activities.place_call import place_call
+from services.temporal_worker.activities.send_invite import expire_invite, send_invite
 from services.temporal_worker.activities.summarize_call import summarize_call
 from services.temporal_worker.workflows.screening_call import ScreeningCallWorkflow
 
@@ -22,7 +23,7 @@ async def main() -> None:
         client,
         task_queue="voice",
         workflows=[ScreeningCallWorkflow],
-        activities=[place_call, mark_unreachable, summarize_call],
+        activities=[place_call, send_invite, expire_invite, mark_unreachable, summarize_call],
     )
     logger.info("worker started", extra={"task_queue": "voice"})
     await worker.run()

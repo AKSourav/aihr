@@ -17,5 +17,6 @@ webtest:       ; cd scripts/web_test && python3 -m http.server 8080     # serves
 k3d-up:        ; ./scripts/k3d-up.sh
 k3d-verify:    ; ./scripts/k3d-verify.sh
 k3d-down:      ; ./scripts/k3d-down.sh
+desktop:       ; cd apps/desktop && unset ELECTRON_RUN_AS_NODE && npm install && npm start
 test:          ; docker compose run --rm api pytest tests/unit
 eval-summaries: ; PYTHONPATH=.:./packages .venv/bin/python -m scripts.eval_summaries

@@ -1,0 +1,17 @@
+Hi {{ first_name }},
+
+{% if reminder -%}
+Here is a fresh link for your screening call for the {{ job_title }} role at {{ company_name }}. Any earlier link we sent you will also take you to this call.
+{%- else -%}
+Thanks for applying for the {{ job_title }} role at {{ company_name }}.
+{%- endif %}
+
+The next step is a short screening conversation (about {{ max_minutes }} minutes) with our AI hiring assistant. You can take it from your browser whenever it suits you; you will need a microphone.
+
+Join the call: {{ join_url }}
+
+This link is personal to you and works until {{ expires_at }}.
+
+The assistant is an AI, not a person. It will ask a few questions about your experience and availability, and answer common questions about the role. The {{ company_name }} team reviews every conversation and will follow up with you.
+
+{{ company_name }} hiring team

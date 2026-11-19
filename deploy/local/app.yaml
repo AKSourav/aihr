@@ -21,6 +21,7 @@ data:
   S3_SECRET_KEY: minio12345
   API_INTERNAL_URL: http://aihr-api:8000
   KEYCLOAK_URL: http://keycloak:8080
+  KEYCLOAK_ISSUER_URL: http://localhost:8080
   KEYCLOAK_REALM: aihr
   KEYCLOAK_AUDIENCE: aihr-api
   DEV_ROUTES_ENABLED: "true"
