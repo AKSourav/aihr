@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db import get_session
 from core.models import AuditEvent, BreakGlassScope, Membership, User
-from core.permissions import Permission, account_grants, grants
+from core.permissions import Permission, grants
 from services.api.auth import current_user
 
 logger = logging.getLogger(__name__)
@@ -86,9 +86,6 @@ def require(
             return context
 
         if context.role is not None and grants(context.role, permission):
-            return context
-
-        if account_grants(context.user.account_role, permission):
             return context
 
         raise HTTPException(status_code=403, detail="forbidden")

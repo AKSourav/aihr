@@ -89,6 +89,22 @@ check "recruiter may not open break-glass" 404 \
   "$(status -H "Authorization: Bearer $RECRUITER" -X POST -H 'Content-Type: application/json' \
      -d "$BG_DENIED" "$BASE/platform/break-glass")"
 
+printf '\n\033[1mAccount administration\033[0m\n'
+ACCOUNT="$(psql_tac "select id from accounts where name = 'Acme Group'")"
+OWNER="$(token_for owner)"
+ESCALATION="{\"email\":\"probe@acme.test\",\"memberships\":[{\"org_id\":\"$ORG\",\"role\":\"account:owner\"}]}"
+check "owner lists the account's members" 200 \
+  "$(status -H "Authorization: Bearer $OWNER" "$BASE/accounts/$ACCOUNT/members")"
+check "recruiter is refused the account" 404 \
+  "$(status -H "Authorization: Bearer $RECRUITER" "$BASE/accounts/$ACCOUNT/members")"
+check "platform admin is refused the account" 404 \
+  "$(status -H "Authorization: Bearer $ROOT_TOKEN" "$BASE/accounts/$ACCOUNT/members")"
+check "owner is refused another account" 404 \
+  "$(status -H "Authorization: Bearer $OWNER" "$BASE/accounts/$OTHER/members")"
+check "an account role is not a valid tenant role" 422 \
+  "$(status -H "Authorization: Bearer $OWNER" -X POST -H 'Content-Type: application/json' \
+     -d "$ESCALATION" "$BASE/accounts/$ACCOUNT/invitations")"
+
 printf '\n\033[1mInternal surface\033[0m\n'
 check "the bundle endpoint needs the internal token" 401 \
   "$(status "$BASE/internal/opa/bundle.tar.gz")"

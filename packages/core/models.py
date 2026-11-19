@@ -50,7 +50,7 @@ class User(Base):
     id: Mapped[uuid.UUID] = uuid_pk()
     keycloak_sub: Mapped[str] = mapped_column(String, unique=True)
     account_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
-    email: Mapped[str] = mapped_column(String, index=True)
+    email: Mapped[str] = mapped_column(String, unique=True, index=True)
     account_role: Mapped[str] = mapped_column(String, default="member")
     is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

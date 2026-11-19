@@ -5,6 +5,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from core.permissions import (
+    ACCOUNT_ROLE_PERMISSIONS,
+    ACCOUNT_ROUTES,
     PLATFORM_ROUTES,
     ROLE_PERMISSIONS,
     ROUTES,
@@ -88,6 +90,44 @@ def test_every_tenant_route_has_a_permission(monkeypatch):
             assert (method.upper(), template) in mapped, f"{method} {template} has no permission"
 
 
+def test_every_account_route_is_registered_in_the_app(monkeypatch):
+    paths = openapi_paths(monkeypatch, DEV_ROUTES_ENABLED="true", INTERNAL_API_TOKEN="tok")
+
+    for method, template, _ in ACCOUNT_ROUTES:
+        assert template in paths, f"{template} is mapped to a permission but not served"
+        assert method.lower() in paths[template]
+
+
+def test_every_account_route_has_a_permission(monkeypatch):
+    paths = openapi_paths(monkeypatch, DEV_ROUTES_ENABLED="true", INTERNAL_API_TOKEN="tok")
+    mapped = {(method, template) for method, template, _ in ACCOUNT_ROUTES}
+
+    for template, operations in paths.items():
+        if not template.startswith("/accounts/"):
+            continue
+        for method in operations:
+            if method.upper() not in HTTP_METHODS:
+                continue
+            assert (method.upper(), template) in mapped, f"{method} {template} has no permission"
+
+
+def test_account_routes_capture_the_account(monkeypatch):
+    for _, template, _ in ACCOUNT_ROUTES:
+        pattern = path_pattern(template, capture="account_id")
+        probe = template.replace("{account_id}", "acc-1").replace("{user_id}", "u-1")
+        match = re.match(pattern, probe)
+
+        assert match is not None
+        assert match.groups() == ("acc-1",)
+
+
+def test_route_table_scopes_every_entry():
+    scopes = {entry["pattern"]: entry["scope"] for entry in route_table()}
+
+    assert scopes["^/tenants/([^/]+)/calls$"] == "tenant"
+    assert scopes["^/accounts/([^/]+)/members$"] == "account"
+
+
 def test_every_platform_route_is_registered_in_the_app(monkeypatch):
     paths = openapi_paths(monkeypatch, DEV_ROUTES_ENABLED="true", INTERNAL_API_TOKEN="tok")
 
@@ -106,8 +146,21 @@ def test_role_permission_table_covers_every_role():
 
     for role in ROLE_PERMISSIONS:
         assert role in table
-    assert "account:owner" in table
-    assert Permission.TENANT_CREATE in table["account:owner"]
+
+
+def test_request_roles_match_the_permission_tables():
+    from typing import get_args
+
+    from services.api.routes.account import AccountRole, TenantRole
+
+    assert set(get_args(TenantRole)) == set(ROLE_PERMISSIONS)
+    assert set(get_args(AccountRole)) == set(ACCOUNT_ROLE_PERMISSIONS)
+
+
+def test_role_permission_table_has_no_account_keys():
+    table = role_permission_table()
+
+    assert not [key for key in table if key.startswith("account:")]
 
 
 def test_route_table_entries_are_serialisable_strings():

@@ -5,6 +5,7 @@ metadata:
 type: Opaque
 stringData:
   internal-api-token: local-internal-token
+  keycloak-admin-client-secret: local-admin-secret
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -47,6 +48,9 @@ spec:
             - name: INTERNAL_API_TOKEN
               valueFrom:
                 secretKeyRef: { name: aihr-internal, key: internal-api-token }
+            - name: KEYCLOAK_ADMIN_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef: { name: aihr-internal, key: keycloak-admin-client-secret }
           ports: [{ containerPort: 8000 }]
           readinessProbe:
             httpGet: { path: /health, port: 8000 }
@@ -85,5 +89,8 @@ spec:
             - name: INTERNAL_API_TOKEN
               valueFrom:
                 secretKeyRef: { name: aihr-internal, key: internal-api-token }
+            - name: KEYCLOAK_ADMIN_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef: { name: aihr-internal, key: keycloak-admin-client-secret }
           resources:
             requests: { cpu: 50m, memory: 192Mi }

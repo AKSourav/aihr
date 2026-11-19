@@ -43,6 +43,10 @@ services:
     depends_on:
       keycloak-db: { condition: service_healthy }
 
+  mailpit:
+    image: axllent/mailpit:latest
+    ports: ["${MAILPIT_PORT:-8025}:8025"]
+
   temporal-init:
     image: busybox
     command: chown -R 1000:1000 /data

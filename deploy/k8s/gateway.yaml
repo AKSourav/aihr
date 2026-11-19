@@ -31,6 +31,9 @@ spec:
             value: /tenants
         - path:
             type: PathPrefix
+            value: /accounts
+        - path:
+            type: PathPrefix
             value: /platform
       backendRefs:
         - name: aihr-api
