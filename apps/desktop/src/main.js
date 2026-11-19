@@ -4,7 +4,7 @@ const { KeycloakAuth } = require("./auth");
 
 const config = {
   apiUrl: (process.env.AIHR_API_URL || "http://localhost:8000").replace(/\/$/, ""),
-  keycloakUrl: process.env.AIHR_KEYCLOAK_URL || "http://keycloak:8080",
+  keycloakUrl: process.env.AIHR_KEYCLOAK_URL || "http://localhost:8080",
   realm: process.env.AIHR_KEYCLOAK_REALM || "aihr",
   clientId: process.env.AIHR_KEYCLOAK_CLIENT_ID || "aihr-desktop",
   redirectUri: "http://127.0.0.1:47823/callback",

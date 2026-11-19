@@ -105,6 +105,32 @@ check "an account role is not a valid tenant role" 422 \
   "$(status -H "Authorization: Bearer $OWNER" -X POST -H 'Content-Type: application/json' \
      -d "$ESCALATION" "$BASE/accounts/$ACCOUNT/invitations")"
 
+printf '\n\033[1mEmail invites\033[0m\n'
+APP="$(psql_tac "select id from applications where org_id = '$ORG' order by created_at limit 1")"
+SCREENING="$(status -H "Authorization: Bearer $RECRUITER" -X POST \
+  -H 'Content-Type: application/json' -d '{"channel":"email"}' \
+  "$BASE/tenants/$ORG/applications/$APP/screenings")"
+check "a recruiter may start an email screening" yes \
+  "$([ "$SCREENING" = 202 ] || [ "$SCREENING" = 409 ] && echo yes || echo no)"
+check "phone screenings are not available yet" 501 \
+  "$(status -H "Authorization: Bearer $RECRUITER" -X POST -H 'Content-Type: application/json' \
+     -d '{"channel":"phone"}' "$BASE/tenants/$ORG/applications/$APP/screenings")"
+check "a viewer may not start a screening" 403 \
+  "$(status -H "Authorization: Bearer $VIEWER" -X POST -H 'Content-Type: application/json' \
+     -d '{"channel":"email"}' "$BASE/tenants/$ORG/applications/$APP/screenings")"
+check "the candidate join page is public" 200 "$(status "$BASE/join/any-token")"
+check "a forged invite token is refused" 404 "$(status "$BASE/public/invites/not.a.token")"
+
+MAILPIT_PORT="$(docker compose port mailpit 8025 2>/dev/null | awk -F: '{print $NF}')"
+DELIVERED=no
+for _ in $(seq 10); do
+  COUNT="$(curl -s "http://localhost:$MAILPIT_PORT/api/v1/messages" \
+    | sed -n 's/.*"messages_count":\([0-9]*\).*/\1/p')"
+  if [ "${COUNT:-0}" -ge 1 ]; then DELIVERED=yes; break; fi
+  sleep 1
+done
+check "the invite email reached Mailpit" yes "$DELIVERED"
+
 printf '\n\033[1mInternal surface\033[0m\n'
 check "the bundle endpoint needs the internal token" 401 \
   "$(status "$BASE/internal/opa/bundle.tar.gz")"

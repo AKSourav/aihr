@@ -71,6 +71,8 @@ async def client(monkeypatch, session: AsyncSession, temporal: FakeTemporal):
     monkeypatch.setenv("INVITE_SIGNING_KEY", "k" * 32)
     monkeypatch.setenv("SMTP_HOST", "mailpit")
     monkeypatch.setenv("LIVEKIT_URL", "wss://lk.example")
+    monkeypatch.setenv("LIVEKIT_API_KEY", "lk-key")
+    monkeypatch.setenv("LIVEKIT_API_SECRET", "lk-secret")
     monkeypatch.setattr(auth, "decode_token", lambda token: {"sub": token, "email": "x@acme.test"})
 
     async def fake_client():
@@ -413,6 +415,21 @@ async def test_screenings_need_email_configured(
 
     assert response.status_code == 503
     assert temporal.calls == []
+
+
+async def test_joining_needs_the_voice_service_configured(
+    client, monkeypatch, session, application, dispatched
+):
+    monkeypatch.setenv("LIVEKIT_API_KEY", "")
+    get_settings.cache_clear()
+    call = await make_call(session, application)
+
+    response = await client.post(f"/public/invites/{token_for(call)}/join")
+
+    assert response.status_code == 503
+    assert dispatched == []
+    await session.refresh(call)
+    assert call.status == "invited"
 
 
 async def test_me_lists_memberships_with_permissions(client, session, two_tenants):

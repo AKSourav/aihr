@@ -167,6 +167,11 @@ async def join_invite(token: str, session: AsyncSession = Depends(get_session)) 
 
     first_join = state == "ready"
     if first_join:
+        settings = get_settings()
+        if not (settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret):
+            raise HTTPException(
+                status_code=503, detail="the voice service is not configured on this server"
+            )
         try:
             call.room_name = await create_room_and_dispatch(call.id)
         except Exception as exc:

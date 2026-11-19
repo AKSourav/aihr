@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     tts_voice_id: str = ""
 
     keycloak_url: str = ""
+    keycloak_issuer_url: str = ""
     keycloak_realm: str = "aihr"
     keycloak_audience: str = "aihr-api"
     keycloak_admin_client_id: str = "aihr-admin"

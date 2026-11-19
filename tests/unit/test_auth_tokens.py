@@ -19,6 +19,7 @@ other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 @pytest.fixture(autouse=True)
 def keycloak_env(monkeypatch):
     monkeypatch.setenv("KEYCLOAK_URL", "http://kc.test")
+    monkeypatch.setenv("KEYCLOAK_ISSUER_URL", "")
     monkeypatch.setenv("KEYCLOAK_REALM", "aihr")
     monkeypatch.setenv("KEYCLOAK_AUDIENCE", AUDIENCE)
     get_settings.cache_clear()
@@ -110,3 +111,33 @@ def test_malformed_authorization_headers_are_rejected(header):
 
 def test_a_well_formed_bearer_header_yields_the_token():
     assert auth.bearer_token("Bearer abc.def.ghi") == "abc.def.ghi"
+
+
+def test_the_issuer_falls_back_to_the_internal_url():
+    assert auth.issuer() == ISSUER
+    assert auth.realm_url() == ISSUER
+
+
+def test_a_public_issuer_is_validated_while_keys_stay_internal(monkeypatch):
+    monkeypatch.setenv("KEYCLOAK_ISSUER_URL", "http://localhost:8080")
+    get_settings.cache_clear()
+
+    assert auth.issuer() == "http://localhost:8080/realms/aihr"
+    assert auth.realm_url() == ISSUER
+
+
+def test_a_token_from_the_public_issuer_is_accepted(monkeypatch):
+    monkeypatch.setenv("KEYCLOAK_ISSUER_URL", "http://localhost:8080")
+    get_settings.cache_clear()
+
+    claims = auth.decode_token(make_token(iss="http://localhost:8080/realms/aihr"))
+
+    assert claims["iss"] == "http://localhost:8080/realms/aihr"
+
+
+def test_a_token_from_the_internal_hostname_is_rejected_once_split(monkeypatch):
+    monkeypatch.setenv("KEYCLOAK_ISSUER_URL", "http://localhost:8080")
+    get_settings.cache_clear()
+
+    with pytest.raises(jwt.InvalidIssuerError):
+        auth.decode_token(make_token(iss=ISSUER))

@@ -114,6 +114,7 @@
           404: ["This link isn't valid", "Please check you opened the full link from your email."],
           409: ["This call has already finished", "Thanks for your time. The hiring team will be in touch."],
           410: ["This link has expired", "The invite is no longer valid. The hiring team may send you a new one."],
+          503: ["This screening isn't available yet", "The voice service isn't set up on this server. Please try the link again later."],
         }[status] || ["Something went wrong", detail || "Please try again in a few minutes."];
         $("problem-title").textContent = copy[0];
         $("problem-text").textContent = copy[1];

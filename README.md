@@ -30,30 +30,28 @@ make down
 | `root` | platform admin, no membership |
 | `outsider` | none |
 
-### Tokens must come from inside the Compose network
+### Two names for one Keycloak
 
-Keycloak's issuer is pinned to `http://keycloak:8080` via `KC_HOSTNAME`, so every token carries `iss: http://keycloak:8080/realms/aihr` — which is exactly what the API expects. A token fetched from the host against `localhost:8080` would carry a different issuer and is correctly rejected by every component.
+Containers reach Keycloak at `http://keycloak:8080`; everything outside Docker reaches it at `http://localhost:8080`. The host cannot resolve `keycloak` — it is a name in Docker's internal DNS, and on macOS the containers live in a VM the host has no route into. No Compose network setting changes that.
+
+So the two names are kept apart deliberately:
+
+| Setting | Value | Who uses it |
+| --- | --- | --- |
+| `KC_HOSTNAME` | `http://localhost:8080` | what Keycloak stamps into every token as `iss`, and the base its own pages redirect to |
+| `KEYCLOAK_ISSUER_URL` | `http://localhost:8080` | the issuer the API requires — must equal `KC_HOSTNAME` |
+| `KEYCLOAK_URL` | `http://keycloak:8080` | where the API fetches signing keys, over the Compose network |
+
+A token therefore says `localhost:8080` no matter where it was requested from, so browsers, the desktop app and `make dev-token` all produce tokens the API accepts.
 
 ```
 TOKEN=$(make dev-token USER=recruiter)
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/tenants/$ORG_ID/applications | jq
 ```
 
-`make dev-token` runs `scripts/get_token.py` through `docker compose exec`, so it resolves `keycloak` by service name.
+Change `KC_HOSTNAME` without changing `KEYCLOAK_ISSUER_URL` and every token is rejected — that is the one way to break this.
 
-### Reaching the Keycloak admin console
-
-The pinned hostname applies to the console too: Keycloak redirects `/admin/` to `http://keycloak:8080`, and its JavaScript calls the Admin API at that same origin. A browser that cannot resolve `keycloak` loads the page and then fails every call — the console shows an untranslated `somethingWentWrong`, because even its translations are fetched over that API.
-
-Make the name resolve on the host, once per machine:
-
-```
-echo '127.0.0.1 keycloak' | sudo tee -a /etc/hosts
-```
-
-Then open **http://keycloak:8080** (`admin` / `admin`). Setting `KC_HOSTNAME_ADMIN` instead does not work: it moves the console's own URL but not the API base it calls, so the failure survives in a more confusing form.
-
-With that entry in place `localhost` and `keycloak` are the same machine from the host's point of view, so a token fetched directly from `http://keycloak:8080` is also valid — `make dev-token` stops being the only option.
+The admin console is at **http://localhost:8080** (`admin` / `admin`).
 
 The realm in `deploy/dev/realm-aihr-local.json` is imported **only when the realm does not already exist**, and Keycloak keeps it in a volume. After editing that file, drop the volume or the change is silently ignored:
 

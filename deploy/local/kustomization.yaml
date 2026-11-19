@@ -63,7 +63,7 @@ patches:
     patch: |
       - op: replace
         path: /spec/jwt/providers/0/issuer
-        value: http://keycloak:8080/realms/aihr
+        value: http://localhost:8080/realms/aihr
       - op: replace
         path: /spec/jwt/providers/0/remoteJWKS/uri
         value: http://keycloak.aihr.svc.cluster.local:8080/realms/aihr/protocol/openid-connect/certs

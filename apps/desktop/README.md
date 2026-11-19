@@ -7,21 +7,20 @@ It is plain HTML and JavaScript with no build step.
 ## Run it against the local stack
 
 ```
-cp .env.example .env              # once; set INVITE_SIGNING_KEY (openssl rand -hex 32)
-echo '127.0.0.1 keycloak' | sudo tee -a /etc/hosts   # once per machine, see the root README
+cp .env.example .env              # once
 make dev                          # stack up, migrated, seeded, dev users granted
 make desktop                      # npm install + launch
 ```
 
 Sign in as `recruiter` / `recruiter` (or `viewer` / `viewer`). Invite emails land in Mailpit at http://localhost:8025. The link in each email opens the candidate join page at http://localhost:8000/join/….
 
-The app signs in at `http://keycloak:8080`, because Keycloak's issuer is pinned to that hostname (see the root README). That is why the `/etc/hosts` entry is needed.
+The app signs in at `http://localhost:8080`. Keycloak stamps that hostname into every token and the API expects it, so nothing outside Docker needs to resolve the `keycloak` service name — see the root README.
 
-The `aihr-desktop` client is in `deploy/dev/realm-aihr-local.json`. Keycloak imports the realm only when its volume is new, so on an existing stack, recreate the volume once: `docker compose rm -sf keycloak keycloak-db && docker volume rm aihr_keycloakdata && make dev`.
+The `aihr-desktop` client is in `deploy/dev/realm-aihr-local.json`. Keycloak imports the realm only when its volume is new, so on an existing stack, recreate the volume once: `docker compose rm -sf keycloak keycloak-db && docker volume rm aihr_keycloakdata && make dev`. `make dev` checks for this and tells you.
 
 The voice call itself also needs the provider keys in `.env` and `docker compose --profile agent up -d agent-worker`.
 
-If you launch the app from a terminal that sets `ELECTRON_RUN_AS_NODE` (some editor extensions do), Electron runs as plain Node. Unset that variable first.
+`make desktop` unsets `ELECTRON_RUN_AS_NODE` for you — some editor terminals set it, and Electron then runs as plain Node.
 
 ### Configuration
 
@@ -30,7 +29,7 @@ The app reads these environment variables. The defaults match docker compose.
 | Variable | Default |
 | --- | --- |
 | `AIHR_API_URL` | `http://localhost:8000` |
-| `AIHR_KEYCLOAK_URL` | `http://keycloak:8080` |
+| `AIHR_KEYCLOAK_URL` | `http://localhost:8080` |
 | `AIHR_KEYCLOAK_REALM` | `aihr` |
 | `AIHR_KEYCLOAK_CLIENT_ID` | `aihr-desktop` |
 
