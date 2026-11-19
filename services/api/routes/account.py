@@ -15,8 +15,6 @@ from services.api.account_authz import AccountContext, account_context, authoriz
 
 router = APIRouter(prefix="/accounts/{account_id}", tags=["accounts"])
 
-# Spelled out because Literal rejects variables. test_request_roles_match_the
-# _permission_tables fails if these ever diverge from the permission tables.
 TenantRole = Literal["admin", "recruiter", "viewer"]
 AccountRole = Literal["owner", "member"]
 
@@ -110,7 +108,6 @@ async def invite(
 
     email = body.email.lower()
     email_sent = False
-    # users.email is unique as of migration 0003, so at most one row matches.
     user = await session.scalar(select(User).where(User.email == email))
     if user is not None and user.account_id is not None and user.account_id != context.account_id:
         raise HTTPException(status_code=409, detail="that address is already in use")
@@ -124,8 +121,6 @@ async def invite(
                 subject = identity["id"]
                 known = await session.scalar(select(User).where(User.keycloak_sub == subject))
                 if known is None and not identity.get("emailVerified", False):
-                    # An unverified pre-existing identity could be anyone's: binding
-                    # grants to it would turn an email-keyed invite into takeover.
                     raise HTTPException(status_code=409, detail="that address is already in use")
             email_sent = await keycloak_admin.send_invitation_email(client, subject)
     except keycloak_admin.KeycloakError as exc:

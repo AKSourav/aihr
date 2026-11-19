@@ -170,8 +170,6 @@ async def upsert_org(session: AsyncSession, account: Account, name: str) -> Orga
 
 
 async def upsert_user(session: AsyncSession, account: Account, email: str, account_role: str) -> User:
-    # Keyed on email, not on the seed: sub — once a real Keycloak subject has
-    # adopted this row the placeholder sub is gone, and email is unique.
     user = await session.scalar(select(User).where(User.email == email))
     if user is None:
         user = User(keycloak_sub=f"seed:{email}", email=email)

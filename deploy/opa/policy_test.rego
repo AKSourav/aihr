@@ -188,9 +188,6 @@ test_recruiter_may_not_reach_an_account_route if {
 		with data.platform_routes as platform_routes
 }
 
-# Without the scope guard the tenant rule would match this account route,
-# capture "org-a" and satisfy it from data.memberships — a tenant membership
-# standing in for account authority.
 test_a_tenant_membership_does_not_satisfy_an_account_route if {
 	not authz.allow with input as request("sub-admin", "GET", "/accounts/org-a/members")
 		with data.memberships as memberships

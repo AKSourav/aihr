@@ -44,8 +44,6 @@ docker compose exec -T api alembic upgrade head
 docker compose exec -T api python -m scripts.seed
 
 say "Bootstrapping the account owner and the platform admin"
-# Only these two cannot come from the API: nothing may create the first owner,
-# and is_platform_admin is deliberately not settable over HTTP.
 docker compose exec -T api python -m scripts.grant_membership \
   --sub "$OWNER_SUB" --email hr@acme.test --account "Acme Group" --account-role owner
 docker compose exec -T api python -m scripts.grant_membership \

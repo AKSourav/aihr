@@ -55,13 +55,6 @@ async def authorize_grants(
     org_ids: Mapping[UUID, str] | set[UUID],
     target: User | None = None,
 ) -> None:
-    """Re-read every premise inside the caller's write transaction.
-
-    `account_context` resolved before the handler began and is advisory: a
-    membership can be revoked between the dependency and the INSERT. Locks are
-    taken in a fixed order — organizations, users, memberships — so this cannot
-    deadlock against a concurrent revoke taking the same path.
-    """
     requested = set(org_ids)
 
     if requested:
@@ -77,8 +70,6 @@ async def authorize_grants(
                 )
             ).all()
         )
-        # Deliberately indistinguishable from "no such org": telling the caller
-        # which ids exist elsewhere would enumerate another customer's tenants.
         if requested - owned:
             raise HTTPException(status_code=403, detail="forbidden")
 
