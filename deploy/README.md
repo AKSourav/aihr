@@ -18,6 +18,7 @@ Docker Compose runs the application — including real login and real role enfor
 
 | User | Password | Access |
 | --- | --- | --- |
+| `owner` | `owner` | account owner on Acme Group |
 | `recruiter` | `recruiter` | recruiter on Acme Fintech |
 | `viewer` | `viewer` | viewer on Acme Fintech |
 | `root` | `root` | platform admin, no membership |
@@ -77,6 +78,16 @@ Route-to-permission mapping lives in `packages/core/permissions.py` and is expor
 **For the first deploy into any environment, set it to `true` first.** In that mode OPA evaluates and logs every decision without acting on it. Watch the decision log until no unexpected denials appear, then set it back to `false` and redeploy.
 
 The first enforcing deploy of edge authorization is the most likely outage in this design. Do not skip the dry run.
+
+## Account administration
+
+`aihr-admin` is a confidential service-account client holding `realm-management`'s `manage-users` and `view-users`. The invitation route uses it to create the Keycloak identity **before** committing local rows, so a failure there cannot leave a membership pointing at a subject that does not exist — the API answers 502 and writes nothing.
+
+The entitlement decision is made twice on purpose. `account_context` resolves the caller before the handler runs and is advisory; `authorize_grants()` re-reads every premise inside the write transaction under `FOR SHARE`, because a membership can be revoked in between. Locks are taken organizations → users → memberships so a concurrent revoke cannot deadlock against it.
+
+One predicate carries the isolation property: every `org_id` in the body must come back from `SELECT id FROM organizations WHERE account_id = :account AND id = ANY(:ids)`. An id that is missing is refused without saying whether it exists elsewhere — distinguishing the two would enumerate another customer's tenants.
+
+`execute-actions-email` needs SMTP. The dev realm points at Mailpit (`http://localhost:8025`); without a mail server the invitation still succeeds and reports `invitation_email_sent: false` rather than failing.
 
 ## Break-glass
 

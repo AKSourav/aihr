@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from core.permissions import (
+    ACCOUNT_ROLE_PERMISSIONS,
     ACCOUNT_ROUTES,
     PLATFORM_ROUTES,
     ROLE_PERMISSIONS,
@@ -145,6 +146,15 @@ def test_role_permission_table_covers_every_role():
 
     for role in ROLE_PERMISSIONS:
         assert role in table
+
+
+def test_request_roles_match_the_permission_tables():
+    from typing import get_args
+
+    from services.api.routes.account import AccountRole, TenantRole
+
+    assert set(get_args(TenantRole)) == set(ROLE_PERMISSIONS)
+    assert set(get_args(AccountRole)) == set(ACCOUNT_ROLE_PERMISSIONS)
 
 
 def test_role_permission_table_has_no_account_keys():

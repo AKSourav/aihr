@@ -4,19 +4,21 @@ from uuid import UUID
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db import get_session
 from core.models import Membership, Organization, User
-from core.permissions import ADMIN, MEMBER, OWNER, RECRUITER, VIEWER
+from core.permissions import ADMIN, MEMBER, OWNER
 from services.api import keycloak_admin
 from services.api.account_authz import AccountContext, account_context, authorize_grants, owner_only
 
 router = APIRouter(prefix="/accounts/{account_id}", tags=["accounts"])
 
-TenantRole = Literal[ADMIN, RECRUITER, VIEWER]
-AccountRole = Literal[OWNER, MEMBER]
+# Spelled out because Literal rejects variables. test_request_roles_match_the
+# _permission_tables fails if these ever diverge from the permission tables.
+TenantRole = Literal["admin", "recruiter", "viewer"]
+AccountRole = Literal["owner", "member"]
 
 
 class MembershipGrant(BaseModel):
@@ -199,7 +201,7 @@ async def replace_memberships(
     for org_id in current:
         if org_id not in desired and org_id in touched:
             await session.execute(
-                Membership.__table__.delete().where(
+                delete(Membership).where(
                     Membership.user_id == target.id, Membership.org_id == org_id
                 )
             )
@@ -227,9 +229,7 @@ async def revoke_memberships(
     if target.id == context.user.id:
         raise HTTPException(status_code=403, detail="cannot revoke your own access")
 
-    await session.execute(
-        Membership.__table__.delete().where(Membership.user_id == target.id)
-    )
+    await session.execute(delete(Membership).where(Membership.user_id == target.id))
     await session.commit()
 
     return await member_out(session, target)

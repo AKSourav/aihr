@@ -67,6 +67,32 @@ It asserts the **application layer only**: 401 without a token, tenant isolation
 
 The two layers answer differently on purpose. A tenant the caller has no membership on is **404** from the API and **403** through the gateway, because OPA denies on the bundle before the API can decide whether that tenant exists.
 
+### Inviting people
+
+`make dev` bootstraps the account owner and the platform admin with `scripts/grant_membership.py`, then invites the recruiter and the viewer **through the API** — because only those two cannot come from it. Nothing may create the first owner, and `is_platform_admin` is deliberately not settable over HTTP.
+
+```bash
+ACCOUNT=$(docker compose exec -T postgres psql -U app -d hr -tAc \
+  "select id from accounts where name='Acme Group'")
+TOKEN=$(make dev-token USER=owner)
+
+curl -s -X POST http://localhost:8000/accounts/$ACCOUNT/invitations \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"email":"priya@acme.test","memberships":[{"org_id":"'"$ORG_ID"'","role":"recruiter"}]}' | jq
+```
+
+That creates the Keycloak identity, attaches the user to the account, grants the memberships, and sends a set-password mail. Read it at **http://localhost:8025** — Mailpit catches everything; nothing leaves the machine.
+
+| | |
+|---|---|
+| `POST /accounts/{id}/invitations` | invite, with roles on several tenants at once |
+| `GET /accounts/{id}/members` | members and their memberships |
+| `PATCH /accounts/{id}/members/{user_id}` | replace a member's membership set |
+| `DELETE /accounts/{id}/members/{user_id}` | revoke every membership in the account |
+| `POST /accounts/{id}/tenants` | create a tenant — account owner only |
+
+Account owners may act on every tenant under their account; tenant admins only on the tenants they administer. A recruiter or viewer gets 404 on all of it, as does a platform admin — break-glass is org-scoped and deliberately does not reach here.
+
 ### The agent worker
 
 `agent-worker` needs LiveKit, Deepgram and Cartesia credentials, so it sits behind a Compose profile and `make dev` skips it. Once the keys are in `.env`:
