@@ -126,7 +126,7 @@ async def make_call(session: AsyncSession, application: Application, **fields) -
 
 async def make_member(session: AsyncSession, org_id, role: str) -> str:
     sub = str(uuid.uuid4())
-    user = User(id=uuid.uuid4(), keycloak_sub=sub, email=f"{role}@acme.test")
+    user = User(id=uuid.uuid4(), keycloak_sub=sub, email=f"{role}-{uuid.uuid4()}@acme.test")
     session.add(user)
     await session.flush()
     session.add(Membership(id=uuid.uuid4(), user_id=user.id, org_id=org_id, role=role))

@@ -7,10 +7,8 @@ GATEWAY_PORT="${GATEWAY_PORT:-8081}"
 EG_VERSION="${EG_VERSION:-v1.2.6}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-RECRUITER_SUB="11111111-1111-1111-1111-111111111111"
-VIEWER_SUB="22222222-2222-2222-2222-222222222222"
 ROOT_SUB="33333333-3333-3333-3333-333333333333"
-OUTSIDER_SUB="44444444-4444-4444-4444-444444444444"
+OWNER_SUB="66666666-6666-6666-6666-666666666666"
 
 say() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 die() { printf '\033[1;31merror: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -102,23 +100,33 @@ say "Running migrations and seed"
 kubectl exec -n "$NAMESPACE" deployment/aihr-api -- alembic upgrade head
 kubectl exec -n "$NAMESPACE" deployment/aihr-api -- python -m scripts.seed
 
-say "Granting tenant access to the realm users"
+say "Bootstrapping the account owner and the platform admin"
 kubectl exec -n "$NAMESPACE" deployment/aihr-api -- \
-  python -m scripts.grant_membership --sub "$RECRUITER_SUB" --email recruiter@acme.test \
-  --org "Acme Fintech" --role recruiter
-kubectl exec -n "$NAMESPACE" deployment/aihr-api -- \
-  python -m scripts.grant_membership --sub "$VIEWER_SUB" --email viewer@acme.test \
-  --org "Acme Fintech" --role viewer
+  python -m scripts.grant_membership --sub "$OWNER_SUB" --email hr@acme.test \
+  --account "Acme Group" --account-role owner
 kubectl exec -n "$NAMESPACE" deployment/aihr-api -- \
   python -m scripts.grant_membership --sub "$ROOT_SUB" --email root@aihr.test --platform-admin
-kubectl exec -n "$NAMESPACE" deployment/aihr-api -- \
-  python -m scripts.grant_membership --sub "$OUTSIDER_SUB" --email outsider@nowhere.test
 
 say "Waiting for the gateway to be programmed"
 kubectl wait --for=condition=Programmed --timeout=5m -n "$NAMESPACE" gateway/aihr
 
 ORG_ID="$(kubectl exec -n "$NAMESPACE" deployment/postgres -- \
   psql -U app -d hr -tAc "select id from organizations where name = 'Acme Fintech'" | tr -d '[:space:]')"
+ACCOUNT_ID="$(kubectl exec -n "$NAMESPACE" deployment/postgres -- \
+  psql -U app -d hr -tAc "select id from accounts where name = 'Acme Group'" | tr -d '[:space:]')"
+
+say "Inviting the remaining users through the account API"
+OWNER_TOKEN="$(kubectl exec -n "$NAMESPACE" deployment/aihr-api -- \
+  python -m scripts.get_token --username owner --password owner)"
+invite() {
+  curl -sf -o /dev/null -X POST "http://localhost:$GATEWAY_PORT/accounts/$ACCOUNT_ID/invitations" \
+    -H "Authorization: Bearer $OWNER_TOKEN" -H 'Content-Type: application/json' \
+    -d "{\"email\":\"$1\",\"memberships\":[{\"org_id\":\"$ORG_ID\",\"role\":\"$2\"}]}" \
+    && printf '  invited %s as %s\n' "$1" "$2" \
+    || printf '  \033[1;33mfailed\033[0m to invite %s\n' "$1"
+}
+invite recruiter@acme.test recruiter
+invite viewer@acme.test viewer
 
 cat <<EOF
 
@@ -129,6 +137,7 @@ $(printf '\033[1;32mCluster is up.\033[0m')
   Namespace     $NAMESPACE
 
   Users (password == username, client aihr-local-cli):
+    owner       account owner, invited the other two through the API
     recruiter   recruiter on Acme Fintech
     viewer      viewer on Acme Fintech
     root        platform admin, no membership

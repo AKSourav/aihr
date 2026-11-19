@@ -12,7 +12,12 @@ from services.api.authz import require, tenant_context
 
 
 async def make_user(session: AsyncSession, **kwargs) -> User:
-    user = User(id=uuid.uuid4(), keycloak_sub=str(uuid.uuid4()), email="x@acme.test", **kwargs)
+    user = User(
+        id=uuid.uuid4(),
+        keycloak_sub=str(uuid.uuid4()),
+        email=f"{uuid.uuid4()}@acme.test",
+        **kwargs,
+    )
     session.add(user)
     await session.flush()
     return user
@@ -123,7 +128,10 @@ async def test_break_glass_grants_access_and_is_audited(session: AsyncSession, t
     assert context.via_break_glass is True
     events = (
         await session.scalars(
-            select(AuditEvent).where(AuditEvent.event_type == "break_glass_access")
+            select(AuditEvent).where(
+                AuditEvent.event_type == "break_glass_access",
+                AuditEvent.actor_user_id == admin.id,
+            )
         )
     ).all()
     assert len(events) == 1

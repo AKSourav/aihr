@@ -77,6 +77,14 @@ ROUTES: list[tuple[str, str, Permission]] = [
     ("GET", "/tenants/{org_id}/calls/{call_id}/transcript", Permission.TRANSCRIPT_READ),
 ]
 
+ACCOUNT_ROUTES: list[tuple[str, str, Permission]] = [
+    ("POST", "/accounts/{account_id}/invitations", Permission.USER_INVITE),
+    ("GET", "/accounts/{account_id}/members", Permission.USER_INVITE),
+    ("PATCH", "/accounts/{account_id}/members/{user_id}", Permission.USER_INVITE),
+    ("DELETE", "/accounts/{account_id}/members/{user_id}", Permission.USER_INVITE),
+    ("POST", "/accounts/{account_id}/tenants", Permission.TENANT_CREATE),
+]
+
 PLATFORM_ROUTES: list[tuple[str, str]] = [
     ("POST", "/platform/break-glass"),
 ]
@@ -87,18 +95,33 @@ SELF_ROUTES: list[tuple[str, str]] = [
 ]
 
 
-def path_pattern(template: str) -> str:
+def path_pattern(template: str, capture: str = "org_id") -> str:
     escaped = re.escape(template)
-    escaped = escaped.replace(r"\{org_id\}", "([^/]+)")
+    escaped = escaped.replace(re.escape("{" + capture + "}"), "([^/]+)")
     escaped = re.sub(r"\\\{[a-z_]+\\\}", "[^/]+", escaped)
     return f"^{escaped}$"
 
 
 def route_table() -> list[dict]:
-    return [
-        {"method": method, "pattern": path_pattern(template), "permission": str(permission)}
+    tenant = [
+        {
+            "method": method,
+            "pattern": path_pattern(template),
+            "permission": str(permission),
+            "scope": "tenant",
+        }
         for method, template, permission in ROUTES
     ]
+    account = [
+        {
+            "method": method,
+            "pattern": path_pattern(template, capture="account_id"),
+            "permission": str(permission),
+            "scope": "account",
+        }
+        for method, template, permission in ACCOUNT_ROUTES
+    ]
+    return tenant + account
 
 
 def platform_route_table() -> list[dict]:
@@ -116,10 +139,7 @@ def self_route_table() -> list[dict]:
 
 
 def role_permission_table() -> dict[str, list[str]]:
-    table = {role: [str(p) for p in perms] for role, perms in ROLE_PERMISSIONS.items()}
-    for role, perms in ACCOUNT_ROLE_PERMISSIONS.items():
-        table[f"account:{role}"] = [str(p) for p in perms]
-    return table
+    return {role: [str(p) for p in perms] for role, perms in ROLE_PERMISSIONS.items()}
 
 
 def grants(role: str, permission: Permission) -> bool:

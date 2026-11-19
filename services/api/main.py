@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from core.logging import configure_logging
 from core.settings import get_settings
 from services.api.routes import (
+    account,
     dev,
     internal_calls,
     me,
@@ -17,6 +18,7 @@ configure_logging()
 
 app = FastAPI(title="aihr-api")
 
+app.include_router(account.router)
 app.include_router(internal_calls.router)
 app.include_router(opa.router)
 app.include_router(platform.router)

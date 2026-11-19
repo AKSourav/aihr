@@ -6,8 +6,9 @@ import tarfile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.models import Membership, User
+from core.models import Membership, Organization, User
 from core.permissions import (
+    ADMIN,
     platform_route_table,
     role_permission_table,
     route_table,
@@ -18,23 +19,31 @@ from core.permissions import (
 async def bundle_data(session: AsyncSession) -> dict:
     users = (await session.scalars(select(User))).all()
     memberships = (await session.scalars(select(Membership))).all()
+    organizations = (await session.scalars(select(Organization))).all()
 
     sub_by_user_id = {user.id: user.keycloak_sub for user in users}
+    account_by_org_id = {org.id: org.account_id for org in organizations}
 
     grants: dict[str, dict[str, str]] = {}
+    access: dict[str, set[str]] = {}
+
+    for user in users:
+        if user.account_role == "owner" and user.account_id is not None:
+            access.setdefault(user.keycloak_sub, set()).add(str(user.account_id))
+
     for membership in memberships:
         subject = sub_by_user_id.get(membership.user_id)
         if subject is None:
             continue
         grants.setdefault(subject, {})[str(membership.org_id)] = membership.role
 
+        account_id = account_by_org_id.get(membership.org_id)
+        if membership.role == ADMIN and account_id is not None:
+            access.setdefault(subject, set()).add(str(account_id))
+
     return {
         "memberships": grants,
-        "account_owners": {
-            user.keycloak_sub: str(user.account_id)
-            for user in users
-            if user.account_role == "owner" and user.account_id is not None
-        },
+        "account_access": {subject: sorted(ids) for subject, ids in access.items()},
         "platform_admins": sorted(user.keycloak_sub for user in users if user.is_platform_admin),
         "role_permissions": role_permission_table(),
         "routes": route_table(),
@@ -45,7 +54,7 @@ async def bundle_data(session: AsyncSession) -> dict:
 
 MANIFEST_ROOTS = [
     "memberships",
-    "account_owners",
+    "account_access",
     "platform_admins",
     "role_permissions",
     "routes",

@@ -48,6 +48,8 @@ check "no token is rejected at the gateway" 401 \
   "$(status "$BASE/tenants/$ORG/applications")"
 check "a garbage token is rejected at the gateway" 401 \
   "$(status -H 'Authorization: Bearer not.a.jwt' "$BASE/tenants/$ORG/applications")"
+check "account routes are behind the same security policy" 401 \
+  "$(status "$BASE/accounts/$ORG/members")"
 
 printf '\n\033[1mTenant isolation\033[0m\n'
 check "recruiter reads their own tenant" 200 \
