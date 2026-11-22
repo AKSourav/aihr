@@ -58,6 +58,32 @@ class Rubric(RootModel[list[RubricDimension]]):
         return self
 
 
+class ProviderSelection(BaseModel):
+    stt_provider: str | None = None
+    stt_model: str | None = None
+    tts_provider: str | None = None
+    tts_model: str | None = None
+    tts_voice_id: str | None = None
+    llm_provider: str | None = None
+    llm_call_model: str | None = None
+    llm_summary_model: str | None = None
+    llm_base_url: str | None = None
+
+
+class ResolvedProvider(BaseModel):
+    provider: str
+    model: str = ""
+    api_key: str = Field(default="", repr=False)
+    base_url: str | None = None
+    voice_id: str | None = None
+
+
+class CallProviders(BaseModel):
+    stt: ResolvedProvider
+    tts: ResolvedProvider
+    llm: ResolvedProvider
+
+
 class CallContext(BaseModel):
     call_id: UUID
     application_id: UUID
