@@ -3,12 +3,13 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db import get_session
 from core.models import AuditEvent, Job, Organization, ProviderCredential
+from core.outbound_url import validate_base_url
 from core.schemas import ProviderSelection
 from core.secrets import encrypt_secret, last4
 from services.api.account_authz import AccountContext, owner_only
@@ -23,6 +24,11 @@ class CredentialIn(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
 
+    @field_validator("base_url")
+    @classmethod
+    def _check_base_url(cls, value: str | None) -> str | None:
+        return validate_base_url(value)
+
 
 class CredentialOut(BaseModel):
     provider: str
@@ -34,6 +40,12 @@ class CredentialOut(BaseModel):
 class ProviderSettingsRequest(BaseModel):
     selection: ProviderSelection = ProviderSelection()
     credentials: list[CredentialIn] = []
+
+    @field_validator("selection")
+    @classmethod
+    def _check_llm_base_url(cls, value: ProviderSelection) -> ProviderSelection:
+        validate_base_url(value.llm_base_url)
+        return value
 
 
 class ProviderSettingsOut(BaseModel):

@@ -8,8 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db import get_session
-from core.models import Membership, ProviderCredential, User
-from core.secrets import decrypt_secret
+from core.models import Membership, Organization, ProviderCredential, User
+from core.secrets import decrypt_secret, encrypt_secret, last4
 from core.settings import get_settings
 from services.api import auth
 
@@ -19,6 +19,7 @@ SECRET = "sk-provider-wxyz"
 @pytest.fixture(autouse=True)
 def provider_env(monkeypatch):
     monkeypatch.setenv("PROVIDER_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("DEV_ROUTES_ENABLED", "false")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -196,3 +197,115 @@ async def test_an_unsupported_provider_is_rejected(client, session, two_tenants)
     )
 
     assert response.status_code == 422
+
+
+HOSTILE_URLS = [
+    "http://169.254.169.254/latest/meta-data/",
+    "https://169.254.169.254/",
+    "https://[::1]/v1",
+    "https://127.0.0.1/v1",
+    "https://localhost/v1",
+    "https://keycloak/v1",
+    "https://postgres.internal/v1",
+    "https://minio.local/v1",
+    "file:///etc/passwd",
+    "gopher://gw.example.com/",
+    "https://user:pass@gw.example.com/v1",
+    "https://gw/v1",
+]
+
+
+@pytest.mark.parametrize("url", HOSTILE_URLS)
+async def test_a_hostile_credential_base_url_is_rejected(client, session, two_tenants, url):
+    owner = await member(session, two_tenants["org_a"], "owner")
+
+    response = await client.put(
+        path(two_tenants),
+        headers=header(owner),
+        json={"credentials": [{"provider": "openai", "api_key": SECRET, "base_url": url}]},
+    )
+
+    assert response.status_code == 422
+    assert "base_url" in response.text
+    assert (await session.scalars(select(ProviderCredential))).all() == []
+
+
+@pytest.mark.parametrize("url", HOSTILE_URLS)
+async def test_a_hostile_llm_base_url_is_rejected(client, session, two_tenants, url):
+    owner = await member(session, two_tenants["org_a"], "owner")
+
+    response = await client.put(
+        path(two_tenants),
+        headers=header(owner),
+        json={"selection": {"llm_base_url": url}},
+    )
+
+    assert response.status_code == 422
+    organization = await session.get(Organization, two_tenants["org_a"])
+    assert organization is not None
+    assert organization.provider_config in (None, {})
+
+
+async def test_a_normal_gateway_url_is_accepted(client, session, two_tenants):
+    owner = await member(session, two_tenants["org_a"], "owner")
+
+    response = await client.put(
+        path(two_tenants),
+        headers=header(owner),
+        json={
+            "selection": {"llm_base_url": "https://api.openai.com/v1"},
+            "credentials": [
+                {
+                    "provider": "openai",
+                    "api_key": SECRET,
+                    "base_url": "https://gateway.example.com:8443/v1",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["selection"]["llm_base_url"] == "https://api.openai.com/v1"
+    assert body["credentials"][0]["base_url"] == "https://gateway.example.com:8443/v1"
+
+
+async def test_plain_http_is_accepted_only_when_dev_routes_are_enabled(
+    client, session, monkeypatch, two_tenants
+):
+    owner = await member(session, two_tenants["org_a"], "owner")
+    body = {"selection": {"llm_base_url": "http://gateway.example.com/v1"}}
+
+    refused = await client.put(path(two_tenants), headers=header(owner), json=body)
+
+    monkeypatch.setenv("DEV_ROUTES_ENABLED", "true")
+    get_settings.cache_clear()
+    allowed = await client.put(path(two_tenants), headers=header(owner), json=body)
+
+    assert refused.status_code == 422
+    assert allowed.status_code == 200
+
+
+async def test_a_stored_value_is_not_revalidated_on_read(client, session, two_tenants):
+    owner = await member(session, two_tenants["org_a"], "owner")
+    organization = await session.get(Organization, two_tenants["org_a"])
+    assert organization is not None
+    organization.provider_config = {"llm_base_url": "http://169.254.169.254/"}
+    session.add(
+        ProviderCredential(
+            org_id=two_tenants["org_a"],
+            job_id=None,
+            provider="openai",
+            base_url="http://keycloak:8080",
+            secret_ciphertext=encrypt_secret(SECRET),
+            secret_last4=last4(SECRET),
+        )
+    )
+    await session.flush()
+
+    response = await client.get(path(two_tenants), headers=header(owner))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["selection"]["llm_base_url"] == "http://169.254.169.254/"
+    assert body["credentials"][0]["base_url"] == "http://keycloak:8080"
