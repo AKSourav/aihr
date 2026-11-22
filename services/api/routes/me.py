@@ -16,6 +16,7 @@ router = APIRouter(tags=["me"])
 class MembershipOut(BaseModel):
     org_id: UUID
     org_name: str
+    account_id: UUID
     role: str
     permissions: list[str]
 
@@ -48,6 +49,7 @@ async def me(
             MembershipOut(
                 org_id=org.id,
                 org_name=org.name,
+                account_id=org.account_id,
                 role=membership.role,
                 permissions=[str(p) for p in ROLE_PERMISSIONS.get(membership.role, [])],
             )
