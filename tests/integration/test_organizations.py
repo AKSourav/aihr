@@ -80,6 +80,7 @@ async def test_the_founder_appears_in_me_as_an_owner(client, session):
     memberships = me.json()["memberships"]
     assert len(memberships) == 1
     assert memberships[0]["org_id"] == created.json()["org_id"]
+    assert memberships[0]["account_id"] == created.json()["account_id"]
     assert memberships[0]["role"] == "owner"
     assert "tenant:create" in memberships[0]["permissions"]
 

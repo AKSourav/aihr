@@ -29,22 +29,6 @@ function recall() {
   try { return localStorage.getItem(STORAGE_KEY); } catch { return null; }
 }
 
-// The API returns an account id only when an organization is created, so the desktop app
-// keeps the org -> account mapping itself. Never holds anything secret.
-const ACCOUNT_KEY = "aihr.accounts";
-function accountMap() {
-  try { return JSON.parse(localStorage.getItem(ACCOUNT_KEY) || "{}") || {}; } catch { return {}; }
-}
-function accountFor(orgId) {
-  const value = accountMap()[orgId];
-  return typeof value === "string" ? value : null;
-}
-function rememberAccount(orgId, accountId) {
-  try {
-    localStorage.setItem(ACCOUNT_KEY, JSON.stringify({ ...accountMap(), [orgId]: accountId }));
-  } catch { /* storage unavailable */ }
-}
-
 const dateFmt = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 const dateTimeFmt = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 const fmtDate = (iso) => (iso ? dateFmt.format(new Date(iso)) : "—");
@@ -278,7 +262,6 @@ function foundTenantView() {
     error.hidden = true;
     try {
       const created = await api("POST", "/organizations", { name });
-      rememberAccount(created.org_id, created.account_id);
       state.me = await api("GET", "/me");
       state.org = state.me.memberships.find((m) => m.org_id === created.org_id) || null;
       if (state.org) remember(state.org.org_id);
@@ -536,11 +519,8 @@ async function jobView(jobId) {
   const providerPanel = h("div", {});
   const openProviders = () => {
     if (providerPanel.firstChild) return providerPanel.replaceChildren();
-    const accountId = accountFor(state.org.org_id);
-    providerPanel.replaceChildren(h("div", { style: "margin-top:16px" }, accountId
-      ? providerSettingsCard(accountId, state.org.org_id, job.job_id)
-      : h("p", { class: "hint", style: "margin:0" },
-          "Set your account ID on the Providers screen before editing this role's providers.")));
+    providerPanel.replaceChildren(h("div", { style: "margin-top:16px" },
+      providerSettingsCard(state.org.account_id, state.org.org_id, job.job_id)));
   };
 
   render(
@@ -802,8 +782,6 @@ const SELECTION_FIELDS = [
   ["llm_summary_model", "LLM model for summaries"],
   ["llm_base_url", "LLM base URL"],
 ];
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 const providerPath = (accountId, orgId, jobId) =>
   `/accounts/${accountId}/tenants/${orgId}${jobId ? `/jobs/${jobId}` : ""}/provider-settings`;
 
@@ -928,7 +906,7 @@ function providerSettingsCard(accountId, orgId, jobId) {
       if (err.status === 401) return;
       const text = {
         403: "Provider settings are owner-only. Ask the account owner to register keys and pick models.",
-        404: "That account ID doesn't match an organization you administer. Check it on the Providers screen.",
+        404: "You don't administer this organization's account.",
       }[err.status] || err.message;
       container.replaceChildren(h("div", { class: "card" }, h("div", { class: "empty" }, text)));
     }
@@ -938,51 +916,13 @@ function providerSettingsCard(accountId, orgId, jobId) {
   return container;
 }
 
-function accountIdCard(orgId, current) {
-  const input = h("input", { class: "input", placeholder: "00000000-0000-0000-0000-000000000000" });
-  input.value = current;
-  const error = h("p", { class: "error" });
-  error.hidden = true;
-
-  function submit() {
-    const value = input.value.trim();
-    if (!UUID_RE.test(value)) {
-      error.hidden = false;
-      error.textContent = "That doesn't look like an account ID.";
-      return;
-    }
-    rememberAccount(orgId, value);
-    providersView();
-  }
-
-  return h("div", { class: "card" },
-    h("div", { class: "card-head" }, h("h2", {}, "Account ID")),
-    h("div", { class: "card-body" },
-      h("p", { class: "muted" },
-        "Provider keys belong to the account that owns this organization. The API reports the " +
-        "account ID when an organization is created; paste it once and this machine remembers it."),
-      h("form", { class: "form", onsubmit: (e) => { e.preventDefault(); submit(); } },
-        h("div", {}, h("label", { class: "field-label" }, "Account ID"), input),
-        h("div", { class: "actions" }, h("button", { class: "btn btn-primary", type: "submit" }, "Continue")),
-        error)));
-}
-
 function providersView() {
-  const orgId = state.org.org_id;
-  const accountId = accountFor(orgId);
-
-  const head = (...tools) => h("div", { class: "page-head" },
-    h("div", {}, h("h1", {}, "Providers"),
-      h("div", { class: "sub" }, `Speech and model vendors for ${state.org.org_name}`)),
-    h("div", { class: "toolbar" }, tools));
-
-  if (!accountId) return render(head(), accountIdCard(orgId, ""));
-
   render(
-    head(
-      h("button", { class: "btn btn-sm btn-ghost", onclick: () => render(head(), accountIdCard(orgId, accountId)) }, "Change account ID"),
-      h("button", { class: "btn", onclick: route }, "Refresh")),
-    providerSettingsCard(accountId, orgId, null));
+    h("div", { class: "page-head" },
+      h("div", {}, h("h1", {}, "Providers"),
+        h("div", { class: "sub" }, `Speech and model vendors for ${state.org.org_name}`)),
+      h("div", { class: "toolbar" }, h("button", { class: "btn", onclick: route }, "Refresh"))),
+    providerSettingsCard(state.org.account_id, state.org.org_id, null));
 }
 
 // ---------------------------------------------------------------- applications list
