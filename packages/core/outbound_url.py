@@ -6,12 +6,28 @@ request (DNS rebinding). Resolution-time pinning and an egress proxy are the
 real fix and are not implemented.
 """
 
+import socket
 from ipaddress import ip_address
 from urllib.parse import urlsplit
 
 from core.settings import get_settings
 
 BLOCKED_SUFFIXES = (".local", ".internal")
+
+
+def _is_ip_literal(host: str) -> bool:
+    try:
+        ip_address(host)
+        return True
+    except ValueError:
+        pass
+    # inet_aton accepts the legacy hex, octal and packed forms the resolver also
+    # accepts, e.g. 0x7f.0.0.1 reaches 127.0.0.1 but is not a valid ip_address.
+    try:
+        socket.inet_aton(host)
+        return True
+    except OSError:
+        return False
 
 
 def validate_base_url(value: str | None) -> str | None:
@@ -40,11 +56,7 @@ def validate_base_url(value: str | None) -> str | None:
 
     host = host.rstrip(".").lower()
 
-    try:
-        ip_address(host)
-    except ValueError:
-        pass
-    else:
+    if _is_ip_literal(host):
         raise ValueError("base_url must use a hostname, not a literal IP address")
 
     if host == "localhost" or host.endswith(BLOCKED_SUFFIXES):

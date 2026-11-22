@@ -212,6 +212,9 @@ HOSTILE_URLS = [
     "gopher://gw.example.com/",
     "https://user:pass@gw.example.com/v1",
     "https://gw/v1",
+    "https://0x7f.0.0.1/v1",
+    "https://0177.0.0.1/v1",
+    "https://2130706433/v1",
 ]
 
 
