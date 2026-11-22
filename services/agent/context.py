@@ -18,7 +18,7 @@ async def fetch_call_context(call_id: str) -> CallContext:
 async def fetch_call_providers(call_id: str) -> CallProviders:
     settings = get_settings()
     url = f"{settings.api_internal_url}/internal/calls/{call_id}/providers"
-    headers = {"Authorization": f"Bearer {settings.internal_api_token}"}
+    headers = {"Authorization": f"Bearer {settings.agent_api_token}"}
 
     async with httpx.AsyncClient() as client:
         response = await client.get(url, headers=headers, timeout=10.0)

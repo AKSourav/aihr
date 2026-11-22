@@ -1,5 +1,6 @@
 import hmac
 import logging
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -26,11 +27,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/internal/calls", tags=["internal"])
 
 
+LIVE_CALL_STATUSES = frozenset({"dispatching", "ringing", "in_progress"})
+
+
+def _require_bearer(authorization: str, token: str, detail: str) -> None:
+    if not token or not hmac.compare_digest(authorization, f"Bearer {token}"):
+        raise HTTPException(status_code=401, detail=detail)
+
+
 def require_internal_token(authorization: str = Header(default="")) -> None:
-    settings = get_settings()
-    expected = f"Bearer {settings.internal_api_token}"
-    if not hmac.compare_digest(authorization, expected):
-        raise HTTPException(status_code=401, detail="invalid internal token")
+    _require_bearer(authorization, get_settings().internal_api_token, "invalid internal token")
+
+
+def require_agent_token(authorization: str = Header(default="")) -> None:
+    _require_bearer(authorization, get_settings().agent_api_token, "invalid agent token")
 
 
 @router.get("/{call_id}/context", response_model=CallContext, dependencies=[Depends(require_internal_token)])
@@ -65,7 +75,7 @@ async def get_call_context(call_id: UUID, session: AsyncSession = Depends(get_se
 @router.get(
     "/{call_id}/providers",
     response_model=CallProviders,
-    dependencies=[Depends(require_internal_token)],
+    dependencies=[Depends(require_agent_token)],
 )
 async def get_call_providers(
     call_id: UUID, session: AsyncSession = Depends(get_session)
@@ -73,6 +83,10 @@ async def get_call_providers(
     call = await session.scalar(select(Call).where(Call.id == call_id))
     if call is None:
         raise HTTPException(status_code=404, detail="call not found")
+
+    window = timedelta(minutes=get_settings().max_call_duration_min)
+    if call.status not in LIVE_CALL_STATUSES or datetime.now(timezone.utc) - call.updated_at > window:
+        raise HTTPException(status_code=409, detail="call is not live")
 
     job = call.application.job
     organization = await session.get(Organization, job.org_id)

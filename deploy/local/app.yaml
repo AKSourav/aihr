@@ -5,6 +5,7 @@ metadata:
 type: Opaque
 stringData:
   internal-api-token: local-internal-token
+  agent-api-token: local-agent-token
   keycloak-admin-client-secret: local-admin-secret
 ---
 apiVersion: v1
@@ -49,6 +50,9 @@ spec:
             - name: INTERNAL_API_TOKEN
               valueFrom:
                 secretKeyRef: { name: aihr-internal, key: internal-api-token }
+            - name: AGENT_API_TOKEN
+              valueFrom:
+                secretKeyRef: { name: aihr-internal, key: agent-api-token }
             - name: KEYCLOAK_ADMIN_CLIENT_SECRET
               valueFrom:
                 secretKeyRef: { name: aihr-internal, key: keycloak-admin-client-secret }

@@ -65,6 +65,8 @@ Edge policy authorizes *the path*; the `org_id` predicate authorizes *the row*. 
 
 OPA never receives a write. The API serves `GET /internal/opa/bundle.tar.gz` — built from Postgres, behind the internal token — and OPA polls it every 10–20s. Postgres stays the only source of truth, so the two cannot diverge on content, only on recency.
 
+`INTERNAL_API_TOKEN` is held by OPA, the workers and the API, so it deliberately unlocks nothing worse than the bundle and call context. Decrypted tenant provider keys sit behind a second token, `AGENT_API_TOKEN`, which guards only `GET /internal/calls/{id}/providers` and is held by the agent worker alone. An empty `AGENT_API_TOKEN` rejects every request to that route; it never falls back to the internal token.
+
 The bundle declares `roots` limited to the data keys it owns (`memberships`, `account_access`, `platform_admins`, `role_permissions`, `routes`, `platform_routes`). Without that, bundle activation would claim the whole document and evict the policy loaded from the ConfigMap.
 
 Route entries carry a `scope` of `tenant` or `account`. The tenant rule resolves the path's capture group against `memberships`; the account rule resolves it against `account_access`, which lists the accounts a subject may touch — account owners, plus tenant admins mapped through their org's account. The guard matters: without it an account route would be satisfied by a tenant membership whose `org_id` matched the account id in the path. The edge deliberately stops there. It answers "may this subject touch this account at all", never which org may be granted — those ids are in the request body, not the path, and the API re-reads every premise under lock before writing.
