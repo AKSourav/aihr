@@ -100,6 +100,8 @@ services:
     build: { context: ., dockerfile: services/agent/Dockerfile }
     profiles: ["agent"]
     env_file: .env
+    environment:
+      AGENT_API_TOKEN: ${AGENT_API_TOKEN}
     depends_on: [api]
 
 volumes:

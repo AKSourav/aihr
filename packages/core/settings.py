@@ -17,6 +17,7 @@ class Settings(BaseSettings):
 
     api_internal_url: str
     internal_api_token: str
+    agent_api_token: str = ""
 
     livekit_url: str = ""
     livekit_api_key: str = ""
