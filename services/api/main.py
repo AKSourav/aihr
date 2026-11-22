@@ -4,8 +4,10 @@ from core.logging import configure_logging
 from core.settings import get_settings
 from services.api.routes import (
     account,
+    candidates,
     dev,
     internal_calls,
+    jobs,
     me,
     opa,
     organizations,
@@ -25,6 +27,8 @@ app.include_router(internal_calls.router)
 app.include_router(opa.router)
 app.include_router(platform.router)
 app.include_router(tenant.router)
+app.include_router(jobs.router)
+app.include_router(candidates.router)
 app.include_router(me.router)
 app.include_router(organizations.router)
 app.include_router(screenings.router)

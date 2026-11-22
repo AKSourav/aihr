@@ -10,7 +10,7 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from core.db import get_session
 from core.invites import issue_invite_token
-from core.models import Application, AuditEvent, Call, Membership, User
+from core.models import Application, AuditEvent, Call, Candidate, Membership, User
 from core.settings import get_settings
 from services.api import auth
 from services.api.routes import public_invites, screenings
@@ -187,10 +187,20 @@ async def test_a_finished_call_cannot_be_joined(client, session, application, di
 
 
 async def new_application(session: AsyncSession, two_tenants) -> Application:
+    candidate = Candidate(
+        id=uuid.uuid4(),
+        org_id=two_tenants["org_a"],
+        first_name="Asha",
+        last_name="Rao",
+        email=f"{uuid.uuid4()}@candidates.test",
+    )
+    session.add(candidate)
+    await session.flush()
+
     application = Application(
         id=uuid.uuid4(),
         org_id=two_tenants["org_a"],
-        candidate_id=two_tenants["candidate_a"],
+        candidate_id=candidate.id,
         job_id=two_tenants["job_a"],
         stage="shortlisted",
     )

@@ -80,6 +80,13 @@ ROUTES: list[tuple[str, str, Permission]] = [
     ("GET", "/tenants/{org_id}/calls/{call_id}", Permission.CALL_READ),
     ("GET", "/tenants/{org_id}/calls/{call_id}/summary", Permission.SCORE_READ),
     ("GET", "/tenants/{org_id}/calls/{call_id}/transcript", Permission.TRANSCRIPT_READ),
+    ("POST", "/tenants/{org_id}/jobs", Permission.JOB_WRITE),
+    ("GET", "/tenants/{org_id}/jobs", Permission.JOB_READ),
+    ("POST", "/tenants/{org_id}/jobs/drafts", Permission.JOB_WRITE),
+    ("GET", "/tenants/{org_id}/jobs/{job_id}", Permission.JOB_READ),
+    ("POST", "/tenants/{org_id}/candidates", Permission.CANDIDATE_WRITE),
+    ("POST", "/tenants/{org_id}/candidates/import", Permission.CANDIDATE_WRITE),
+    ("POST", "/tenants/{org_id}/applications", Permission.CANDIDATE_WRITE),
 ]
 
 ACCOUNT_ROUTES: list[tuple[str, str, Permission]] = [

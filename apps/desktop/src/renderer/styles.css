@@ -79,6 +79,7 @@ a { color: var(--accent); text-decoration: none; }
   font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--line);
   border-radius: 8px; padding: 7px 10px; width: 100%;
 }
+textarea.input { min-height: 160px; resize: vertical; font: inherit; }
 .input:focus, .select:focus, .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .field-label { display: block; font-size: 12px; color: var(--muted); margin: 0 0 6px; }
 

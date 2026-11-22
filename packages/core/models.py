@@ -108,6 +108,7 @@ class Application(Base):
     __tablename__ = "applications"
     __table_args__ = (
         UniqueConstraint("id", "org_id"),
+        UniqueConstraint("org_id", "candidate_id", "job_id"),
         ForeignKeyConstraint(["candidate_id", "org_id"], ["candidates.id", "candidates.org_id"]),
         ForeignKeyConstraint(["job_id", "org_id"], ["jobs.id", "jobs.org_id"]),
     )
