@@ -31,6 +31,12 @@ async def grant(session: AsyncSession, user: User, org_id, role: str) -> None:
     await session.flush()
 
 
+async def make_owner(session: AsyncSession, two_tenants) -> User:
+    user = await make_user(session)
+    await grant(session, user, two_tenants["org_a"], "owner")
+    return user
+
+
 @pytest.fixture
 def keycloak(monkeypatch):
     calls = {"created": [], "emailed": [], "existing": None, "fail": False}
@@ -83,7 +89,7 @@ def header(user: User) -> dict:
 async def test_owner_invites_with_roles_on_several_tenants(
     client, session, two_tenants, keycloak
 ):
-    owner = await make_user(session, account_id=two_tenants["account"], account_role="owner")
+    owner = await make_owner(session, two_tenants)
 
     response = await client.post(
         f"/accounts/{two_tenants['account']}/invitations",
@@ -108,7 +114,7 @@ async def test_owner_invites_with_roles_on_several_tenants(
 async def test_owner_cannot_grant_on_another_accounts_tenant(
     client, session, two_tenants, keycloak
 ):
-    owner = await make_user(session, account_id=two_tenants["account"], account_role="owner")
+    owner = await make_owner(session, two_tenants)
 
     response = await client.post(
         f"/accounts/{two_tenants['account']}/invitations",
@@ -126,7 +132,7 @@ async def test_owner_cannot_grant_on_another_accounts_tenant(
 async def test_a_tenant_admin_cannot_grant_on_an_org_they_do_not_administer(
     client, session, two_tenants, keycloak
 ):
-    admin = await make_user(session, account_id=two_tenants["account"])
+    admin = await make_user(session)
     await grant(session, admin, two_tenants["org_a"], "admin")
 
     response = await client.post(
@@ -142,7 +148,7 @@ async def test_a_tenant_admin_cannot_grant_on_an_org_they_do_not_administer(
 
 
 async def test_a_tenant_admin_may_grant_on_their_own_org(client, session, two_tenants, keycloak):
-    admin = await make_user(session, account_id=two_tenants["account"])
+    admin = await make_user(session)
     await grant(session, admin, two_tenants["org_a"], "admin")
 
     response = await client.post(
@@ -161,7 +167,7 @@ async def test_a_tenant_admin_may_grant_on_their_own_org(client, session, two_te
 async def test_a_recruiter_or_viewer_is_denied_every_account_route(
     client, session, two_tenants, keycloak, role
 ):
-    member = await make_user(session, account_id=two_tenants["account"])
+    member = await make_user(session)
     await grant(session, member, two_tenants["org_a"], role)
     account = two_tenants["account"]
 
@@ -183,10 +189,9 @@ async def test_a_recruiter_or_viewer_is_denied_every_account_route(
 async def test_a_tenant_admin_cannot_modify_the_account_owner(
     client, session, two_tenants, keycloak
 ):
-    admin = await make_user(session, account_id=two_tenants["account"])
+    admin = await make_user(session)
     await grant(session, admin, two_tenants["org_a"], "admin")
-    owner = await make_user(session, account_id=two_tenants["account"], account_role="owner")
-    await grant(session, owner, two_tenants["org_a"], "admin")
+    owner = await make_owner(session, two_tenants)
 
     response = await client.patch(
         f"/accounts/{two_tenants['account']}/members/{owner.id}",
@@ -203,7 +208,7 @@ async def test_a_tenant_admin_cannot_modify_the_account_owner(
 async def test_an_account_role_in_a_membership_is_rejected(
     client, session, two_tenants, keycloak
 ):
-    owner = await make_user(session, account_id=two_tenants["account"], account_role="owner")
+    owner = await make_owner(session, two_tenants)
 
     response = await client.post(
         f"/accounts/{two_tenants['account']}/invitations",
@@ -221,7 +226,7 @@ async def test_an_account_role_in_a_membership_is_rejected(
 async def test_is_platform_admin_cannot_be_set_through_an_invitation(
     client, session, two_tenants, keycloak
 ):
-    owner = await make_user(session, account_id=two_tenants["account"], account_role="owner")
+    owner = await make_owner(session, two_tenants)
 
     response = await client.post(
         f"/accounts/{two_tenants['account']}/invitations",
@@ -236,13 +241,16 @@ async def test_is_platform_admin_cannot_be_set_through_an_invitation(
 
 
 async def test_a_tenant_admin_cannot_create_an_owner(client, session, two_tenants, keycloak):
-    admin = await make_user(session, account_id=two_tenants["account"])
+    admin = await make_user(session)
     await grant(session, admin, two_tenants["org_a"], "admin")
 
     response = await client.post(
         f"/accounts/{two_tenants['account']}/invitations",
         headers=header(admin),
-        json={"email": "priya@acme.test", "account_role": "owner"},
+        json={
+            "email": "priya@acme.test",
+            "memberships": [{"org_id": str(two_tenants["org_a"]), "role": "owner"}],
+        },
     )
 
     assert response.status_code == 403
@@ -251,7 +259,7 @@ async def test_a_tenant_admin_cannot_create_an_owner(client, session, two_tenant
 async def test_inviting_an_existing_address_returns_the_same_shape(
     client, session, two_tenants, keycloak
 ):
-    owner = await make_user(session, account_id=two_tenants["account"], account_role="owner")
+    owner = await make_owner(session, two_tenants)
     payload = {
         "email": "priya@acme.test",
         "memberships": [{"org_id": str(two_tenants["org_a"]), "role": "viewer"}],
@@ -273,7 +281,7 @@ async def test_inviting_an_existing_address_returns_the_same_shape(
 async def test_an_unverified_pre_existing_identity_is_refused(
     client, session, two_tenants, keycloak
 ):
-    owner = await make_user(session, account_id=two_tenants["account"], account_role="owner")
+    owner = await make_owner(session, two_tenants)
     keycloak["existing"] = {"id": str(uuid.uuid4()), "emailVerified": False}
 
     response = await client.post(
@@ -285,25 +293,38 @@ async def test_an_unverified_pre_existing_identity_is_refused(
     assert response.status_code == 409
 
 
-async def test_an_address_on_another_account_is_refused_without_naming_it(
+async def test_an_address_on_another_account_may_be_invited(
     client, session, two_tenants, keycloak
 ):
-    owner = await make_user(session, account_id=two_tenants["account"], account_role="owner")
-    outsider = await make_user(session, account_id=two_tenants["other_account"])
+    owner = await make_owner(session, two_tenants)
+    outsider = await make_user(session)
+    await grant(session, outsider, two_tenants["other_org"], "recruiter")
+    keycloak["existing"] = {"id": outsider.keycloak_sub, "emailVerified": True}
 
     response = await client.post(
         f"/accounts/{two_tenants['account']}/invitations",
         headers=header(owner),
-        json={"email": outsider.email},
+        json={
+            "email": outsider.email,
+            "memberships": [{"org_id": str(two_tenants["org_a"]), "role": "viewer"}],
+        },
     )
 
-    assert response.status_code == 409
-    assert str(two_tenants["other_account"]) not in response.text
-    assert not keycloak["created"]
+    assert response.status_code == 200
+    held = {
+        (row.org_id, row.role)
+        for row in (
+            await session.scalars(select(Membership).where(Membership.user_id == outsider.id))
+        ).all()
+    }
+    assert held == {
+        (two_tenants["other_org"], "recruiter"),
+        (two_tenants["org_a"], "viewer"),
+    }
 
 
 async def test_a_keycloak_failure_leaves_no_local_state(client, session, two_tenants, keycloak):
-    owner = await make_user(session, account_id=two_tenants["account"], account_role="owner")
+    owner = await make_owner(session, two_tenants)
     keycloak["fail"] = True
 
     response = await client.post(
@@ -322,10 +343,11 @@ async def test_a_keycloak_failure_leaves_no_local_state(client, session, two_ten
 async def test_members_lists_the_account_and_their_memberships(
     client, session, two_tenants, keycloak
 ):
-    owner = await make_user(session, account_id=two_tenants["account"], account_role="owner")
-    member = await make_user(session, account_id=two_tenants["account"])
+    owner = await make_owner(session, two_tenants)
+    member = await make_user(session)
     await grant(session, member, two_tenants["org_a"], "recruiter")
-    await make_user(session, account_id=two_tenants["other_account"])
+    outsider = await make_user(session)
+    await grant(session, outsider, two_tenants["other_org"], "recruiter")
 
     response = await client.get(
         f"/accounts/{two_tenants['account']}/members", headers=header(owner)
@@ -337,8 +359,8 @@ async def test_members_lists_the_account_and_their_memberships(
 
 
 async def test_patch_reconciles_the_membership_set(client, session, two_tenants, keycloak):
-    owner = await make_user(session, account_id=two_tenants["account"], account_role="owner")
-    member = await make_user(session, account_id=two_tenants["account"])
+    owner = await make_owner(session, two_tenants)
+    member = await make_user(session)
     await grant(session, member, two_tenants["org_a"], "recruiter")
 
     response = await client.patch(
@@ -354,7 +376,7 @@ async def test_patch_reconciles_the_membership_set(client, session, two_tenants,
 
 
 async def test_you_cannot_demote_your_own_admin_membership(client, session, two_tenants, keycloak):
-    admin = await make_user(session, account_id=two_tenants["account"])
+    admin = await make_user(session)
     await grant(session, admin, two_tenants["org_a"], "admin")
 
     response = await client.patch(
@@ -369,26 +391,30 @@ async def test_you_cannot_demote_your_own_admin_membership(client, session, two_
 async def test_delete_revokes_every_membership_in_the_account(
     client, session, two_tenants, keycloak
 ):
-    owner = await make_user(session, account_id=two_tenants["account"], account_role="owner")
-    member = await make_user(session, account_id=two_tenants["account"])
+    owner = await make_owner(session, two_tenants)
+    member = await make_user(session)
     await grant(session, member, two_tenants["org_a"], "recruiter")
     await grant(session, member, two_tenants["org_b"], "viewer")
+    await grant(session, member, two_tenants["other_org"], "viewer")
 
     response = await client.delete(
         f"/accounts/{two_tenants['account']}/members/{member.id}", headers=header(owner)
     )
 
     assert response.status_code == 200
-    remaining = (
-        await session.scalars(select(Membership).where(Membership.user_id == member.id))
-    ).all()
-    assert remaining == []
+    remaining = [
+        row.org_id
+        for row in (
+            await session.scalars(select(Membership).where(Membership.user_id == member.id))
+        ).all()
+    ]
+    assert remaining == [two_tenants["other_org"]]
 
 
 async def test_only_an_owner_may_create_a_tenant(client, session, two_tenants, keycloak):
-    admin = await make_user(session, account_id=two_tenants["account"])
+    admin = await make_user(session)
     await grant(session, admin, two_tenants["org_a"], "admin")
-    owner = await make_user(session, account_id=two_tenants["account"], account_role="owner")
+    owner = await make_owner(session, two_tenants)
 
     denied = await client.post(
         f"/accounts/{two_tenants['account']}/tenants",
@@ -405,14 +431,14 @@ async def test_only_an_owner_may_create_a_tenant(client, session, two_tenants, k
     assert allowed.status_code == 200
 
 
-async def test_account_role_does_not_widen_a_tenant_role(session, two_tenants):
-    owner = await make_user(session, account_id=two_tenants["account"], account_role="owner")
-    await grant(session, owner, two_tenants["org_a"], "viewer")
+async def test_owning_one_tenant_does_not_widen_your_role_in_another(session, two_tenants):
+    owner = await make_owner(session, two_tenants)
+    await grant(session, owner, two_tenants["org_b"], "viewer")
 
     dependency = require(Permission.USER_INVITE)
     with pytest.raises(Exception) as excinfo:
         await dependency(
-            context=await _context(session, owner, two_tenants["org_a"]), session=session
+            context=await _context(session, owner, two_tenants["org_b"]), session=session
         )
 
     assert getattr(excinfo.value, "status_code", None) == 403

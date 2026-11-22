@@ -19,12 +19,26 @@ class AccountContext:
     is_owner: bool
 
 
+async def owns_account(session: AsyncSession, user_id: UUID, account_id: UUID) -> bool:
+    found = await session.scalar(
+        select(Membership.id)
+        .join(Organization, Organization.id == Membership.org_id)
+        .where(
+            Membership.user_id == user_id,
+            Membership.role == OWNER,
+            Organization.account_id == account_id,
+        )
+        .limit(1)
+    )
+    return found is not None
+
+
 async def account_context(
     account_id: UUID,
     user: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> AccountContext:
-    if user.account_role == OWNER and user.account_id == account_id:
+    if await owns_account(session, user.id, account_id):
         return AccountContext(account_id=account_id, user=user, is_owner=True)
 
     administers = await session.scalar(
@@ -73,33 +87,29 @@ async def authorize_grants(
         if requested - owned:
             raise HTTPException(status_code=403, detail="forbidden")
 
-    caller = await session.scalar(
-        select(User).where(User.id == context.user.id).with_for_update(read=True)
-    )
-    if caller is None:
-        raise HTTPException(status_code=403, detail="forbidden")
-
-    is_owner = caller.account_role == OWNER and caller.account_id == context.account_id
-    if not is_owner:
-        administered = set(
-            (
-                await session.scalars(
-                    select(Membership.org_id)
-                    .join(Organization, Organization.id == Membership.org_id)
-                    .where(
-                        Membership.user_id == caller.id,
-                        Membership.role == ADMIN,
-                        Organization.account_id == context.account_id,
-                    )
-                    .with_for_update(read=True, of=Membership)
+    held = {
+        row.org_id: row.role
+        for row in (
+            await session.execute(
+                select(Membership.org_id, Membership.role)
+                .join(Organization, Organization.id == Membership.org_id)
+                .where(
+                    Membership.user_id == context.user.id,
+                    Organization.account_id == context.account_id,
                 )
-            ).all()
-        )
+                .with_for_update(read=True, of=Membership)
+            )
+        ).all()
+    }
+
+    is_owner = OWNER in held.values()
+    if not is_owner:
+        administered = {org_id for org_id, role in held.items() if role == ADMIN}
         if not administered or requested - administered:
             raise HTTPException(status_code=403, detail="forbidden")
 
     if target is not None and not is_owner:
-        if target.account_role == OWNER and target.account_id == context.account_id:
+        if await owns_account(session, target.id, context.account_id):
             raise HTTPException(status_code=403, detail="forbidden")
 
     context.is_owner = is_owner

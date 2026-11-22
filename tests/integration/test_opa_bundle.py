@@ -50,7 +50,11 @@ async def test_bundle_omits_users_without_memberships(session: AsyncSession):
 
 
 async def test_account_owner_reaches_their_account(session: AsyncSession, two_tenants):
-    owner = await make_user(session, account_id=two_tenants["account"], account_role="owner")
+    owner = await make_user(session)
+    session.add(
+        Membership(id=uuid.uuid4(), user_id=owner.id, org_id=two_tenants["org_a"], role="owner")
+    )
+    await session.flush()
 
     data = await bundle_data(session)
 
@@ -84,7 +88,10 @@ async def test_a_recruiter_reaches_no_account(session: AsyncSession, two_tenants
 
 
 async def test_account_access_lists_are_sorted(session: AsyncSession, two_tenants):
-    admin = await make_user(session, account_id=two_tenants["account"], account_role="owner")
+    admin = await make_user(session)
+    session.add(
+        Membership(id=uuid.uuid4(), user_id=admin.id, org_id=two_tenants["org_a"], role="owner")
+    )
     session.add(
         Membership(id=uuid.uuid4(), user_id=admin.id, org_id=two_tenants["other_org"], role="admin")
     )

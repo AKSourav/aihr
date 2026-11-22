@@ -169,13 +169,11 @@ async def upsert_org(session: AsyncSession, account: Account, name: str) -> Orga
     return org
 
 
-async def upsert_user(session: AsyncSession, account: Account, email: str, account_role: str) -> User:
+async def upsert_user(session: AsyncSession, email: str) -> User:
     user = await session.scalar(select(User).where(User.email == email))
     if user is None:
         user = User(keycloak_sub=f"seed:{email}", email=email)
         session.add(user)
-    user.account_id = account.id
-    user.account_role = account_role
     await session.flush()
     return user
 
@@ -288,8 +286,8 @@ async def seed() -> None:
     async with async_session() as session:
         account = await upsert_account(session, ACCOUNT_NAME)
         org = await upsert_org(session, account, ORG_NAME)
-        hr_user = await upsert_user(session, account, HR_EMAIL, "owner")
-        await upsert_membership(session, hr_user, org, "admin")
+        hr_user = await upsert_user(session, HR_EMAIL)
+        await upsert_membership(session, hr_user, org, "owner")
         await upsert_platform_admin(session, PLATFORM_ADMIN_EMAIL)
 
         backend_job = await upsert_job(session, org, SENIOR_BACKEND_JOB)

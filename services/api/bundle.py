@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.models import Membership, Organization, User
 from core.permissions import (
     ADMIN,
+    OWNER,
     platform_route_table,
     role_permission_table,
     route_table,
@@ -27,10 +28,6 @@ async def bundle_data(session: AsyncSession) -> dict:
     grants: dict[str, dict[str, str]] = {}
     access: dict[str, set[str]] = {}
 
-    for user in users:
-        if user.account_role == "owner" and user.account_id is not None:
-            access.setdefault(user.keycloak_sub, set()).add(str(user.account_id))
-
     for membership in memberships:
         subject = sub_by_user_id.get(membership.user_id)
         if subject is None:
@@ -38,7 +35,7 @@ async def bundle_data(session: AsyncSession) -> dict:
         grants.setdefault(subject, {})[str(membership.org_id)] = membership.role
 
         account_id = account_by_org_id.get(membership.org_id)
-        if membership.role == ADMIN and account_id is not None:
+        if membership.role in (OWNER, ADMIN) and account_id is not None:
             access.setdefault(subject, set()).add(str(account_id))
 
     return {

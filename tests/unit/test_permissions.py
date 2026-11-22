@@ -5,14 +5,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from core.permissions import (
-    ACCOUNT_ROLE_PERMISSIONS,
     ACCOUNT_ROUTES,
     PLATFORM_ROUTES,
     ROLE_PERMISSIONS,
     ROUTES,
     SENSITIVE,
     Permission,
-    account_grants,
     grants,
     path_pattern,
     role_permission_table,
@@ -151,10 +149,9 @@ def test_role_permission_table_covers_every_role():
 def test_request_roles_match_the_permission_tables():
     from typing import get_args
 
-    from services.api.routes.account import AccountRole, TenantRole
+    from services.api.routes.account import TenantRole
 
     assert set(get_args(TenantRole)) == set(ROLE_PERMISSIONS)
-    assert set(get_args(AccountRole)) == set(ACCOUNT_ROLE_PERMISSIONS)
 
 
 def test_role_permission_table_has_no_account_keys():
@@ -176,15 +173,15 @@ def test_viewer_cannot_read_transcripts_or_create_calls():
     assert not grants("viewer", Permission.CALL_CREATE)
 
 
-def test_account_owner_has_no_tenant_data_permissions():
-    assert account_grants("owner", Permission.TENANT_CREATE)
-    assert not account_grants("owner", Permission.TRANSCRIPT_READ)
-    assert not account_grants("owner", Permission.SCORE_READ)
+def test_owner_is_an_admin_who_can_also_create_tenants():
+    assert grants("owner", Permission.TENANT_CREATE)
+    assert grants("owner", Permission.TRANSCRIPT_READ)
+    assert not grants("admin", Permission.TENANT_CREATE)
 
 
 def test_unknown_roles_grant_nothing():
     assert not grants("superuser", Permission.SCORE_READ)
-    assert not account_grants("superuser", Permission.TENANT_CREATE)
+    assert not grants("superuser", Permission.TENANT_CREATE)
 
 
 def test_sensitive_permissions_are_a_subset_of_all_permissions():

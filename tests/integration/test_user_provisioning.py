@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.models import User
+from core.models import Membership, User
 from services.api import auth
 
 
@@ -30,9 +30,11 @@ async def test_a_provisioned_user_has_no_tenant_access_by_default(session: Async
 
     user = await auth.current_user(token=subject, session=session)
 
-    assert user.account_id is None
+    memberships = (
+        await session.scalars(select(Membership).where(Membership.user_id == user.id))
+    ).all()
+    assert memberships == []
     assert user.is_platform_admin is False
-    assert user.account_role == "member"
 
 
 async def test_second_login_reuses_the_same_user(session: AsyncSession):

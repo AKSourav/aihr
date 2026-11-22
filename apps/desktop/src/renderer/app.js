@@ -103,12 +103,50 @@ const tenantPath = (suffix) => `/tenants/${state.org.org_id}${suffix}`;
 
 // ---------------------------------------------------------------- auth screens
 
+function showSignup(open) {
+  $("signup").hidden = !open;
+  $("signup-error").hidden = true;
+  $("signup-toggle").hidden = false;
+  $("signup-toggle").textContent = open
+    ? "Already have an account? Sign in"
+    : "New here? Create an organization";
+  $("login-btn").hidden = open;
+  if (open) $("signup-email").focus();
+}
+
 function showLogin(message) {
   stopPolling();
   $("shell").hidden = true;
   $("login").hidden = false;
   $("login-error").hidden = !message;
   $("login-error").textContent = message || "";
+  showSignup(false);
+}
+
+async function submitSignup(event) {
+  event.preventDefault();
+  const btn = $("signup-btn");
+  const error = $("signup-error");
+  error.hidden = true;
+  btn.disabled = true;
+  btn.textContent = "Creating…";
+
+  const res = await window.aihr.signup({
+    email: $("signup-email").value.trim(),
+    organization_name: $("signup-org").value.trim(),
+  });
+
+  btn.disabled = false;
+  btn.textContent = "Create organization";
+  if (!res.ok) {
+    error.hidden = false;
+    error.textContent = (res.data && res.data.detail) || `Signup failed (${res.status})`;
+    return;
+  }
+
+  showSignup(false);
+  $("signup-toggle").hidden = true;
+  toast("Check your email to set a password, then sign in.", "ok");
 }
 
 async function signIn() {
@@ -171,10 +209,7 @@ function failure(err) {
 async function route() {
   stopPolling();
   if (!state.me) return;
-  if (!state.org) {
-    return render(h("div", { class: "card" }, h("div", { class: "empty" },
-      "You don't have access to any organization yet. Ask an admin to grant you a role.")));
-  }
+  if (!state.org) return foundTenantView();
 
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   try {
@@ -188,6 +223,49 @@ async function route() {
   } catch (err) {
     failure(err);
   }
+}
+
+// ---------------------------------------------------------------- first organization
+
+function foundTenantView() {
+  const input = h("input", { class: "input", maxlength: "200", placeholder: "Acme Fintech" });
+  const error = h("p", { class: "error" });
+  error.hidden = true;
+
+  const submit = async () => {
+    const name = input.value.trim();
+    if (!name) return;
+    error.hidden = true;
+    try {
+      const created = await api("POST", "/organizations", { name });
+      state.me = await api("GET", "/me");
+      state.org = state.me.memberships.find((m) => m.org_id === created.org_id) || null;
+      if (state.org) remember(state.org.org_id);
+      $("org-select").replaceChildren(
+        ...state.me.memberships.map((m) => h("option", { value: m.org_id }, m.org_name)));
+      $("org-select").value = created.org_id;
+      $("org-select").disabled = state.me.memberships.length < 2;
+      toast(`${created.name} is ready.`, "ok");
+      route();
+    } catch (err) {
+      if (err.status === 401) return;
+      error.hidden = false;
+      error.textContent = err.message;
+    }
+  };
+
+  render(h("div", { class: "card" },
+    h("div", { class: "card-head" }, h("h2", {}, "Create your organization")),
+    h("div", { class: "card-body" },
+      h("p", { class: "muted" },
+        "You don't belong to an organization yet. Create one to start screening candidates, " +
+        "or ask an admin to invite you to theirs."),
+      h("form", { class: "form", onsubmit: (e) => { e.preventDefault(); submit(); } },
+        h("div", {},
+          h("label", { class: "field-label" }, "Organization name"),
+          input),
+        h("button", { class: "btn btn-primary", type: "submit" }, "Create organization"),
+        error))));
 }
 
 // ---------------------------------------------------------------- applications list
@@ -422,6 +500,8 @@ function transcriptCard(transcript) {
 // ---------------------------------------------------------------- boot
 
 $("login-btn").addEventListener("click", signIn);
+$("signup-toggle").addEventListener("click", () => showSignup($("signup").hidden));
+$("signup").addEventListener("submit", submitSignup);
 $("logout-btn").addEventListener("click", async () => {
   await window.aihr.logout();
   state.me = null;
