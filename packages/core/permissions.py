@@ -90,6 +90,18 @@ ROUTES: list[tuple[str, str, Permission]] = [
 ]
 
 ACCOUNT_ROUTES: list[tuple[str, str, Permission]] = [
+    ("GET", "/accounts/{account_id}/tenants/{org_id}/provider-settings", Permission.TENANT_CREATE),
+    ("PUT", "/accounts/{account_id}/tenants/{org_id}/provider-settings", Permission.TENANT_CREATE),
+    (
+        "GET",
+        "/accounts/{account_id}/tenants/{org_id}/jobs/{job_id}/provider-settings",
+        Permission.TENANT_CREATE,
+    ),
+    (
+        "PUT",
+        "/accounts/{account_id}/tenants/{org_id}/jobs/{job_id}/provider-settings",
+        Permission.TENANT_CREATE,
+    ),
     ("POST", "/accounts/{account_id}/invitations", Permission.USER_INVITE),
     ("GET", "/accounts/{account_id}/members", Permission.USER_INVITE),
     ("PATCH", "/accounts/{account_id}/members/{user_id}", Permission.USER_INVITE),

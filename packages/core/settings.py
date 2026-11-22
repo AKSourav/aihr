@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     llm_summary_model: str = ""
     tts_api_key: str = ""
     tts_voice_id: str = ""
+    provider_encryption_key: str = ""
 
     keycloak_url: str = ""
     keycloak_issuer_url: str = ""

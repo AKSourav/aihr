@@ -2,18 +2,18 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any
 
 import httpx
 from livekit.agents import AgentSession, JobContext, JobExecutorType, JobProcess, WorkerOptions, cli
 from livekit.agents.inference import TurnDetector
 from livekit.agents.llm import async_toolset  # noqa: F401  (force import at prewarm, not first use)
-from livekit.plugins import cartesia, deepgram, openai, silero
+from livekit.plugins import silero
 
 from core.logging import configure_logging
 from core.schemas import CallMode, CallOutcome, CallStatus
 from core.settings import get_settings
-from services.agent.context import fetch_call_context
+from services.agent.context import fetch_call_context, fetch_call_providers
+from services.agent.providers import build_llm, build_stt, build_tts
 from services.agent.reporter import report_outcome
 from services.agent.screener import HRScreenerAgent
 from services.agent.transcript import TranscriptCollector
@@ -37,6 +37,7 @@ async def entrypoint(ctx: JobContext) -> None:
         raise RuntimeError("no call_id in job metadata and CONSOLE_CALL_ID is not set")
 
     call_context = await fetch_call_context(call_id)
+    providers = await fetch_call_providers(call_id)
     settings = get_settings()
 
     if call_context.call_mode in (CallMode.web, CallMode.email):
@@ -53,22 +54,20 @@ async def entrypoint(ctx: JobContext) -> None:
             )
             return
 
-    tts_kwargs: dict[str, Any] = {"api_key": settings.tts_api_key}
-    if settings.tts_voice_id:
-        tts_kwargs["voice"] = settings.tts_voice_id
-
-    llm_kwargs: dict[str, Any] = {
-        "model": settings.llm_call_model,
-        "api_key": settings.llm_api_key,
-        "max_completion_tokens": 300,
-    }
-    if settings.llm_base_url:
-        llm_kwargs["base_url"] = settings.llm_base_url
+    logger.info(
+        "providers resolved",
+        extra={
+            "call_id": call_id,
+            "stt_provider": providers.stt.provider,
+            "tts_provider": providers.tts.provider,
+            "llm_model": providers.llm.model,
+        },
+    )
 
     session = AgentSession(
-        stt=deepgram.STT(api_key=settings.deepgram_api_key),
-        llm=openai.LLM(**llm_kwargs),
-        tts=cartesia.TTS(**tts_kwargs),
+        stt=build_stt(providers.stt),
+        llm=build_llm(providers.llm),
+        tts=build_tts(providers.tts),
         vad=ctx.proc.userdata["vad"],
         turn_detection=TurnDetector(),
     )

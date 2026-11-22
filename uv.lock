@@ -25,6 +25,7 @@ dependencies = [
     { name = "livekit-agents" },
     { name = "livekit-plugins-cartesia" },
     { name = "livekit-plugins-deepgram" },
+    { name = "livekit-plugins-elevenlabs" },
     { name = "livekit-plugins-openai" },
     { name = "livekit-plugins-silero" },
     { name = "openai" },
@@ -54,6 +55,7 @@ requires-dist = [
     { name = "livekit-agents", specifier = "==1.8.9" },
     { name = "livekit-plugins-cartesia", specifier = ">=1.8.9" },
     { name = "livekit-plugins-deepgram", specifier = ">=1.8.9" },
+    { name = "livekit-plugins-elevenlabs", specifier = ">=1.8.9" },
     { name = "livekit-plugins-openai", specifier = ">=1.8.9" },
     { name = "livekit-plugins-silero", specifier = ">=1.8.9" },
     { name = "openai", specifier = "==3.37.0" },
@@ -1596,6 +1598,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b4/40/342f6867b6ae5909cea999c303e9bc06826b3dc36d28847d8f676c28a763/livekit_plugins_deepgram-1.8.9.tar.gz", hash = "sha256:9381a428e0ce5d0969f74a5aed40e2178e3ec074738d579191fcf34d1d0bd7af", size = 26868, upload-time = "2026-10-24T02:33:04.551Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a0/07/919cb5e3536ddaefccdd0cfcd9e0862c9fbadbbada41331fe1c64ef8350e/livekit_plugins_deepgram-1.8.9-py3-none-any.whl", hash = "sha256:3a08feb5c838680557bc4bfef33f6eb2fbb0a870208d4973c05ee3d643bbe80d", size = 34017, upload-time = "2026-10-24T02:33:03.237Z" },
+]
+
+[[package]]
+name = "livekit-plugins-elevenlabs"
+version = "1.8.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "livekit-agents", extra = ["codecs"] },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/80/9b/d0a360e32151cedabb2c5ae9b4c3bbbf1892fb679f0b4aed7730cdcca8dc/livekit_plugins_elevenlabs-1.8.9.tar.gz", hash = "sha256:ca0475ca49aa830bb5577c6ae5ea3ec3554efdf095e30cfd8da884a9ddcdd39a", size = 25842, upload-time = "2026-10-24T02:33:23.654Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6e/45/8be1a3eac81b99c96efa5df77adacbceb3a2739426db3654e14d45143447/livekit_plugins_elevenlabs-1.8.9-py3-none-any.whl", hash = "sha256:e09c5edb414d58ab36cc90115d63af8a1dcad818a49893e0398ee91b6e43b1b3", size = 27713, upload-time = "2026-10-24T02:33:22.286Z" },
 ]
 
 [[package]]

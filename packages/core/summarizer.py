@@ -6,7 +6,7 @@ from jinja2 import Environment, FileSystemLoader
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
-from core.schemas import CallSummary, TokenUsage, Turn
+from core.schemas import CallSummary, ResolvedProvider, TokenUsage, Turn
 from core.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -91,15 +91,19 @@ def render_summary_prompt(job_title: str, rubric: list[dict], question_plan: dic
     )
 
 
-def _client() -> AsyncOpenAI:
+def _client(llm: ResolvedProvider | None = None) -> AsyncOpenAI:
     settings = get_settings()
-    client_kwargs = {"api_key": settings.llm_api_key, "timeout": SUMMARY_TIMEOUT_S}
-    if settings.llm_base_url:
-        client_kwargs["base_url"] = settings.llm_base_url
+    api_key = llm.api_key if llm else settings.llm_api_key
+    base_url = (llm.base_url if llm else None) or settings.llm_base_url
+    client_kwargs = {"api_key": api_key, "timeout": SUMMARY_TIMEOUT_S}
+    if base_url:
+        client_kwargs["base_url"] = base_url
     return AsyncOpenAI(**client_kwargs)
 
 
 async def moderate(text: str) -> list[str]:
+    if not get_settings().llm_api_key:
+        return []
     try:
         response = await _client().moderations.create(model=MODERATION_MODEL, input=text)
     except Exception as exc:
@@ -112,10 +116,15 @@ async def moderate(text: str) -> list[str]:
 
 
 async def summarize_transcript(
-    job_title: str, rubric: list[dict], question_plan: dict, transcript: list[Turn]
+    job_title: str,
+    rubric: list[dict],
+    question_plan: dict,
+    transcript: list[Turn],
+    llm: ResolvedProvider | None = None,
 ) -> tuple[CallSummary, TokenUsage]:
     settings = get_settings()
-    client = _client()
+    client = _client(llm)
+    model = (llm.model if llm else "") or settings.llm_summary_model
 
     messages: list[ChatCompletionMessageParam] = [
         {"role": "system", "content": render_summary_prompt(job_title, rubric, question_plan)},
@@ -126,7 +135,7 @@ async def summarize_transcript(
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             response = await client.chat.completions.create(
-                model=settings.llm_summary_model,
+                model=model,
                 messages=messages,
                 response_format={"type": "json_object"},
                 max_completion_tokens=MAX_SUMMARY_TOKENS,

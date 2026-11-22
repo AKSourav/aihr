@@ -12,6 +12,7 @@ from services.api.routes import (
     opa,
     organizations,
     platform,
+    provider_config,
     public_invites,
     screenings,
     signup,
@@ -26,6 +27,7 @@ app.include_router(account.router)
 app.include_router(internal_calls.router)
 app.include_router(opa.router)
 app.include_router(platform.router)
+app.include_router(provider_config.router)
 app.include_router(tenant.router)
 app.include_router(jobs.router)
 app.include_router(candidates.router)
