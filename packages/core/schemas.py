@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, RootModel, model_validator
 
 
 class CallMode(str, Enum):
@@ -29,9 +29,33 @@ class QuestionItem(BaseModel):
 
 class QuestionPlan(BaseModel):
     intro_pitch: str
-    questions: list[QuestionItem]
+    questions: list[QuestionItem] = Field(min_length=1)
     faq: list[FaqItem] = []
-    max_minutes: int
+    max_minutes: int = Field(ge=1, le=60)
+
+    @model_validator(mode="after")
+    def check_unique_question_ids(self) -> "QuestionPlan":
+        ids = [question.id for question in self.questions]
+        if len(set(ids)) != len(ids):
+            raise ValueError("question ids must be unique")
+        return self
+
+
+class RubricDimension(BaseModel):
+    dimension: str = Field(min_length=1, max_length=64)
+    weight: float = Field(gt=0)
+    description: str = Field(min_length=1, max_length=400)
+
+
+class Rubric(RootModel[list[RubricDimension]]):
+    @model_validator(mode="after")
+    def check_dimensions(self) -> "Rubric":
+        if not self.root:
+            raise ValueError("rubric must have at least one dimension")
+        dimensions = [item.dimension for item in self.root]
+        if len(set(dimensions)) != len(dimensions):
+            raise ValueError("rubric dimensions must be unique")
+        return self
 
 
 class CallContext(BaseModel):

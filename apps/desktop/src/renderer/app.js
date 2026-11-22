@@ -49,6 +49,7 @@ const STATUS_TONE = {
   callback_requested: "warn",
   expired: "bad", lost: "bad", failed: "bad", no_answer: "bad", voicemail: "bad",
   busy: "bad", declined: "bad", unreachable: "bad",
+  created: "ok", matched: "info", duplicate: "warn", invalid: "bad",
 };
 const ACTIVE_STATUSES = new Set(["inviting", "invited", "in_progress", "ringing", "dispatching"]);
 const STATUS_LABEL = { invited: "invite sent", in_progress: "in call" };
@@ -84,7 +85,11 @@ function can(permission) {
 
 class ApiError extends Error {
   constructor(status, detail) {
-    super(detail || `Request failed (${status})`);
+    // FastAPI validation errors arrive as an array of {loc, msg} objects.
+    const text = Array.isArray(detail)
+      ? detail.map((e) => `${((e && e.loc) || []).slice(-2).join(".")}: ${e && e.msg}`).join("; ")
+      : detail;
+    super(text || `Request failed (${status})`);
     this.status = status;
   }
 }
@@ -206,14 +211,27 @@ function failure(err) {
   render(h("div", { class: "card" }, h("div", { class: "empty" }, text)));
 }
 
+function setActiveNav(name) {
+  for (const el of document.querySelectorAll("[data-nav]")) {
+    el.classList.toggle("active", el.getAttribute("data-nav") === name);
+  }
+}
+
 async function route() {
   stopPolling();
   if (!state.me) return;
   if (!state.org) return foundTenantView();
 
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  setActiveNav(parts[0] === "jobs" ? "jobs" : "applications");
   try {
-    if (parts[0] === "applications" && parts[1] && parts[2] === "calls" && parts[3]) {
+    if (parts[0] === "jobs" && parts[1] === "new") {
+      newJobView();
+    } else if (parts[0] === "jobs" && parts[1]) {
+      await jobView(parts[1]);
+    } else if (parts[0] === "jobs") {
+      await jobsView();
+    } else if (parts[0] === "applications" && parts[1] && parts[2] === "calls" && parts[3]) {
       await callView(parts[1], parts[3]);
     } else if (parts[0] === "applications" && parts[1]) {
       await applicationView(parts[1]);
@@ -268,6 +286,468 @@ function foundTenantView() {
         error))));
 }
 
+// ---------------------------------------------------------------- jobs list
+
+async function jobsView() {
+  loading();
+  const rows = await api("GET", tenantPath(`/jobs?limit=${PAGE}&offset=0`));
+
+  render(
+    h("div", { class: "page-head" },
+      h("div", {}, h("h1", {}, "Jobs"), h("div", { class: "sub" }, `${rows.length}${rows.length < PAGE ? "" : "+"} jobs`)),
+      h("div", { class: "toolbar" },
+        can("job:write") ? h("button", { class: "btn btn-primary", onclick: () => (location.hash = "#/jobs/new") }, "New job") : null,
+        h("button", { class: "btn", onclick: route }, "Refresh"))),
+    h("div", { class: "card" },
+      h("table", { class: "table" },
+        h("thead", {}, h("tr", {}, ["Role", "Created"].map((t) => h("th", {}, t)))),
+        h("tbody", {}, rows.length
+          ? rows.map((j) =>
+              h("tr", { class: "clickable", onclick: () => (location.hash = `#/jobs/${j.job_id}`) },
+                h("td", {}, j.title),
+                h("td", { class: "num muted" }, fmtDate(j.created_at))))
+          : h("tr", {}, h("td", { colspan: "2" }, h("div", { class: "empty" },
+              h("p", { style: "margin:0 0 12px" }, "No jobs yet. A job carries the rubric and the questions the AI screens against."),
+              can("job:write") ? h("button", { class: "btn btn-primary", onclick: () => (location.hash = "#/jobs/new") }, "Create your first job") : null)))))));
+}
+
+// ---------------------------------------------------------------- create job
+
+function newJobView() {
+  const title = h("input", { class: "input", maxlength: "200", placeholder: "Senior Backend Engineer" });
+  const description = h("textarea", { class: "input", rows: "10", placeholder: "Paste the job description here, then draft with AI or fill the fields in yourself." });
+  const introPitch = h("textarea", { class: "input", rows: "4", placeholder: "How the AI opens the call" });
+  const maxMinutes = h("input", { class: "input", type: "number", min: "1", max: "60", step: "1", value: "15", style: "width:120px" });
+  const error = h("p", { class: "error" });
+  error.hidden = true;
+
+  const rubric = [];
+  const questions = [];
+  let faq = [];
+  const rubricRows = h("div", {});
+  const questionRows = h("div", {});
+  const faqNote = h("p", { class: "hint" });
+
+  function drawRubric() {
+    rubricRows.replaceChildren(...(rubric.length
+      ? rubric.map((d, i) =>
+          h("div", { class: "actions", style: "margin-bottom:8px" },
+            h("input", { class: "input", style: "flex:1 1 160px", placeholder: "Dimension", value: d.dimension, oninput: (e) => (d.dimension = e.target.value) }),
+            h("input", { class: "input", type: "number", step: "0.05", min: "0", style: "width:90px", value: d.weight, oninput: (e) => (d.weight = e.target.value) }),
+            h("input", { class: "input", style: "flex:2 1 240px", placeholder: "What a strong answer looks like", value: d.description, oninput: (e) => (d.description = e.target.value) }),
+            h("button", { class: "btn btn-sm", type: "button", onclick: () => { rubric.splice(i, 1); drawRubric(); } }, "Remove")))
+      : [h("p", { class: "hint", style: "margin:0 0 8px" }, "No dimensions yet. The rubric is what scores the call — add at least one.")]));
+  }
+
+  function drawQuestions() {
+    questionRows.replaceChildren(...(questions.length
+      ? questions.map((q, i) =>
+          h("div", { class: "rubric-item" },
+            h("div", { class: "actions" },
+              h("input", { class: "input", style: "width:160px", placeholder: "id", value: q.id, oninput: (e) => (q.id = e.target.value) }),
+              h("input", { class: "input", style: "flex:1 1 240px", placeholder: "Question", value: q.text, oninput: (e) => (q.text = e.target.value) }),
+              h("button", { class: "btn btn-sm", type: "button", onclick: () => { questions.splice(i, 1); drawQuestions(); } }, "Remove")),
+            h("div", { class: "actions", style: "margin-top:8px" },
+              h("input", { class: "input", style: "flex:1 1 200px", placeholder: "Probe (optional)", value: q.probe, oninput: (e) => (q.probe = e.target.value) }),
+              h("input", { class: "input", style: "flex:1 1 200px", placeholder: "Extract (comma separated)", value: q.extract, oninput: (e) => (q.extract = e.target.value) }),
+              h("label", { class: "hint", style: "margin:0;display:flex;align-items:center;gap:6px" },
+                h("input", { type: "checkbox", checked: q.required, onchange: (e) => (q.required = e.target.checked) }), "Required"))))
+      : [h("p", { class: "hint", style: "margin:0" }, "No questions yet. A plan needs at least one.")]));
+  }
+
+  function drawFaqNote() {
+    faqNote.hidden = !faq.length;
+    faqNote.textContent = `${faq.length} drafted FAQ answers will be saved with this job.`;
+  }
+
+  const draftBtn = h("button", { class: "btn", type: "button", onclick: () => draft() }, "Draft with AI");
+  const saveBtn = h("button", { class: "btn btn-primary", type: "submit" }, "Create job");
+
+  async function draft() {
+    const text = description.value.trim();
+    if (!text) return toast("Paste a job description first.", "bad");
+    error.hidden = true;
+    draftBtn.disabled = true;
+    draftBtn.textContent = "Drafting…";
+
+    try {
+      const d = await api("POST", tenantPath("/jobs/drafts"), { title: title.value.trim() || "Untitled role", description: text });
+      const plan = d.question_plan || {};
+      if (!title.value.trim()) title.value = d.title || "";
+      rubric.splice(0, rubric.length, ...(d.rubric || []).map((r) => ({
+        dimension: r.dimension || "", weight: String(r.weight), description: r.description || "",
+      })));
+      questions.splice(0, questions.length, ...(plan.questions || []).map((q) => ({
+        id: q.id || "", text: q.text || "", probe: q.probe || "", required: Boolean(q.required),
+        extract: Array.isArray(q.extract) ? q.extract.join(", ") : (q.extract || ""),
+      })));
+      introPitch.value = plan.intro_pitch || "";
+      maxMinutes.value = String(plan.max_minutes || 15);
+      faq = plan.faq || [];
+      drawRubric();
+      drawQuestions();
+      drawFaqNote();
+      toast("Draft ready. Review it before saving.", "ok");
+    } catch (err) {
+      if (err.status === 401) return;
+      const text2 = {
+        503: "AI drafting isn't configured on the server.",
+        502: "The model didn't return a usable plan — fill the fields in yourself.",
+      }[err.status] || err.message;
+      toast(text2, "bad");
+    } finally {
+      draftBtn.disabled = false;
+      draftBtn.textContent = "Draft with AI";
+    }
+  }
+
+  async function save() {
+    error.hidden = true;
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Saving…";
+
+    try {
+      const created = await api("POST", tenantPath("/jobs"), {
+        title: title.value.trim(),
+        rubric: rubric.map((d) => ({
+          dimension: d.dimension.trim(),
+          weight: Number(d.weight),
+          description: d.description.trim(),
+        })),
+        question_plan: {
+          intro_pitch: introPitch.value.trim(),
+          questions: questions.map((q) => {
+            const extract = q.extract.split(",").map((s) => s.trim()).filter(Boolean);
+            return {
+              id: q.id.trim(),
+              text: q.text.trim(),
+              probe: q.probe.trim() || null,
+              required: q.required,
+              extract: extract.length ? extract : null,
+            };
+          }),
+          faq,
+          max_minutes: Number(maxMinutes.value),
+        },
+      });
+      toast(`${created.title} is ready. Add candidates to start screening.`, "ok");
+      location.hash = `#/jobs/${created.job_id}`;
+    } catch (err) {
+      if (err.status === 401) return;
+      error.hidden = false;
+      error.textContent = err.message;
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Create job";
+    }
+  }
+
+  render(
+    h("a", { class: "crumb", href: "#/jobs" }, "← Jobs"),
+    h("div", { class: "page-head" },
+      h("div", {}, h("h1", {}, "New job"),
+        h("div", { class: "sub" }, "The rubric scores the screening call; the question plan drives it."))),
+    h("form", { onsubmit: (e) => { e.preventDefault(); save(); } },
+      h("div", { class: "card" },
+        h("div", { class: "card-head" }, h("h2", {}, "Role")),
+        h("div", { class: "card-body" },
+          h("div", { class: "form", style: "margin:0" },
+            h("div", {}, h("label", { class: "field-label" }, "Title"), title),
+            h("div", {}, h("label", { class: "field-label" }, "Job description"), description),
+            h("div", { class: "actions" }, draftBtn,
+              h("span", { class: "hint", style: "margin:0" }, "Drafting fills in the rubric and question plan below. Nothing is saved until you create the job."))))),
+      h("div", { class: "card" },
+        h("div", { class: "card-head" }, h("h2", {}, "Rubric"),
+          h("span", { class: "muted" }, "dimension · weight · description")),
+        h("div", { class: "card-body" }, rubricRows,
+          h("button", { class: "btn btn-sm", type: "button", onclick: () => { rubric.push({ dimension: "", weight: "1", description: "" }); drawRubric(); } }, "Add dimension"))),
+      h("div", { class: "card" },
+        h("div", { class: "card-head" }, h("h2", {}, "Question plan")),
+        h("div", { class: "card-body" },
+          h("div", { class: "form", style: "margin:0 0 14px" },
+            h("div", {}, h("label", { class: "field-label" }, "Intro pitch"), introPitch),
+            h("div", {}, h("label", { class: "field-label" }, "Maximum minutes"), maxMinutes)),
+          questionRows,
+          h("div", { style: "margin-top:14px" },
+            h("button", { class: "btn btn-sm", type: "button", onclick: () => { questions.push({ id: "", text: "", probe: "", required: true, extract: "" }); drawQuestions(); } }, "Add question")),
+          faqNote)),
+      h("div", { class: "actions", style: "margin-top:16px" },
+        saveBtn,
+        h("button", { class: "btn", type: "button", onclick: () => (location.hash = "#/jobs") }, "Cancel")),
+      error));
+
+  drawRubric();
+  drawQuestions();
+  drawFaqNote();
+  title.focus();
+}
+
+// ---------------------------------------------------------------- job detail
+
+async function jobView(jobId) {
+  loading();
+  const job = await api("GET", tenantPath(`/jobs/${jobId}`));
+  const rubric = Array.isArray(job.rubric) ? job.rubric : [];
+  const plan = job.question_plan || {};
+  const questions = plan.questions || [];
+  const faq = plan.faq || [];
+
+  const panel = h("div", {});
+  let open = "";
+  const toggle = (name, build) => () => {
+    open = open === name ? "" : name;
+    panel.replaceChildren(...(open ? [h("div", { style: "margin-top:16px" }, build())] : []));
+  };
+
+  const candidates = can("candidate:write")
+    ? h("div", { class: "card" },
+        h("div", { class: "card-head" }, h("h2", {}, "Candidates")),
+        h("div", { class: "card-body" },
+          h("div", { class: "actions" },
+            h("button", { class: "btn btn-primary", onclick: toggle("add", () => addCandidateForm(job)) }, "Add candidate"),
+            h("button", { class: "btn", onclick: toggle("import", () => importCandidatesForm(job)) }, "Import candidates")),
+          h("p", { class: "hint" }, "New candidates are shortlisted against this role and appear under Applications."),
+          panel))
+    : null;
+
+  render(
+    h("a", { class: "crumb", href: "#/jobs" }, "← Jobs"),
+    h("div", { class: "page-head" },
+      h("div", {}, h("h1", {}, job.title), h("div", { class: "sub" }, `Created ${fmtDateTime(job.created_at)}`)),
+      h("div", { class: "toolbar" }, h("button", { class: "btn", onclick: route }, "Refresh"))),
+    candidates,
+    h("div", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", {}, "Rubric")),
+      h("div", { class: "card-body" }, rubric.length
+        ? rubric.map((d) =>
+            h("div", { class: "rubric-item" },
+              h("div", { class: "label" }, h("span", {}, humanize(d.dimension)), h("span", { class: "muted" }, `weight ${d.weight}`)),
+              h("div", { class: "evidence" }, d.description)))
+        : h("span", { class: "muted" }, "No rubric dimensions."))),
+    h("div", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", {}, "Questions"),
+        h("span", { class: "muted" }, `up to ${plan.max_minutes || "—"} minutes`)),
+      plan.intro_pitch ? h("div", { class: "card-body" }, h("p", { class: "summary-text" }, plan.intro_pitch)) : null,
+      questions.length
+        ? h("table", { class: "table" },
+            h("thead", {}, h("tr", {}, ["#", "Question", "Probe", "Required"].map((t) => h("th", {}, t)))),
+            h("tbody", {}, questions.map((q, i) =>
+              h("tr", {},
+                h("td", { class: "num muted" }, String(i + 1)),
+                h("td", {}, q.text, h("span", { class: "secondary" }, q.id)),
+                h("td", { class: "muted" }, q.probe || "—"),
+                h("td", {}, q.required ? "yes" : "no")))))
+        : h("div", { class: "empty" }, "No questions in this plan.")),
+    h("div", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", {}, "FAQ")),
+      faq.length
+        ? h("div", { class: "card-body" }, h("dl", { class: "kv" }, faq.flatMap((f) => [h("dt", {}, f.q), h("dd", {}, f.a)])))
+        : h("div", { class: "empty" }, "No FAQ answers.")));
+}
+
+function addCandidateForm(job) {
+  const first = h("input", { class: "input", placeholder: "First name", required: true });
+  const last = h("input", { class: "input", placeholder: "Last name", required: true });
+  const email = h("input", { class: "input", type: "email", placeholder: "name@example.com", required: true });
+  const phone = h("input", { class: "input", placeholder: "+15550100 (optional)" });
+  const btn = h("button", { class: "btn btn-primary", type: "submit" }, "Add candidate");
+  const error = h("p", { class: "error" });
+  error.hidden = true;
+
+  async function submit() {
+    error.hidden = true;
+    btn.disabled = true;
+    btn.textContent = "Adding…";
+    try {
+      const res = await api("POST", tenantPath("/candidates"), {
+        first_name: first.value.trim(),
+        last_name: last.value.trim(),
+        email: email.value.trim(),
+        phone_e164: phone.value.trim() || null,
+        job_id: job.job_id,
+      });
+      toast(res.created
+        ? "Candidate added and shortlisted for this role."
+        : "That candidate was already in this organization — they're on this role now.", "ok");
+      for (const field of [first, last, email, phone]) field.value = "";
+      first.focus();
+    } catch (err) {
+      if (err.status === 401) return;
+      error.hidden = false;
+      error.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Add candidate";
+    }
+  }
+
+  return h("form", { class: "form", style: "margin:0", onsubmit: (e) => { e.preventDefault(); submit(); } },
+    h("div", { class: "actions" },
+      h("div", { style: "flex:1 1 180px" }, h("label", { class: "field-label" }, "First name"), first),
+      h("div", { style: "flex:1 1 180px" }, h("label", { class: "field-label" }, "Last name"), last)),
+    h("div", { class: "actions" },
+      h("div", { style: "flex:2 1 240px" }, h("label", { class: "field-label" }, "Email"), email),
+      h("div", { style: "flex:1 1 180px" }, h("label", { class: "field-label" }, "Phone"), phone)),
+    h("div", { class: "actions" }, btn),
+    error);
+}
+
+// ---------------------------------------------------------------- CSV import
+
+const CSV_MAX_ROWS = 500;
+const CSV_COLUMNS = {
+  first_name: "first_name", firstname: "first_name", first: "first_name", given_name: "first_name",
+  last_name: "last_name", lastname: "last_name", last: "last_name", surname: "last_name", family_name: "last_name",
+  name: "name", full_name: "name", candidate: "name", candidate_name: "name",
+  email: "email", email_address: "email", e_mail: "email",
+  phone_e164: "phone_e164", phone: "phone_e164", phone_number: "phone_e164", mobile: "phone_e164",
+};
+const CSV_FIELDS = ["first_name", "last_name", "email", "phone_e164"];
+
+function parseCsv(text) {
+  const src = String(text).replace(/^\uFEFF/, "");
+  const rows = [];
+  let row = [];
+  let field = "";
+  let quoted = false;
+
+  for (let i = 0; i < src.length; i += 1) {
+    const c = src[i];
+    if (quoted) {
+      if (c !== '"') field += c;
+      else if (src[i + 1] === '"') { field += '"'; i += 1; }
+      else quoted = false;
+    } else if (c === '"') {
+      quoted = true;
+    } else if (c === ",") {
+      row.push(field);
+      field = "";
+    } else if (c === "\n" || c === "\r") {
+      if (c === "\r" && src[i + 1] === "\n") i += 1;
+      row.push(field);
+      rows.push(row);
+      field = "";
+      row = [];
+    } else {
+      field += c;
+    }
+  }
+  if (field || row.length) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows.filter((r) => r.some((v) => v.trim() !== ""));
+}
+
+function rowsFromCsv(text) {
+  const table = parseCsv(text);
+  if (!table.length) return { error: "That file has no rows." };
+
+  const header = table[0].map((cell) => CSV_COLUMNS[cell.trim().toLowerCase().replace(/[\s-]+/g, "_")] || null);
+  const columns = [...new Set(header.filter(Boolean))];
+  if (!columns.includes("email")) return { error: "The CSV needs an email column." };
+
+  const body = table.slice(1);
+  const rows = body.slice(0, CSV_MAX_ROWS).map((cells) => {
+    const row = { first_name: "", last_name: "", email: "", phone_e164: "" };
+    let whole = "";
+    header.forEach((key, i) => {
+      const value = (cells[i] || "").trim();
+      if (!key) return;
+      if (key === "name") whole = value;
+      else row[key] = value;
+    });
+    if (whole && !row.first_name) {
+      const cut = whole.indexOf(" ");
+      row.first_name = cut === -1 ? whole : whole.slice(0, cut);
+      if (!row.last_name) row.last_name = cut === -1 ? "" : whole.slice(cut + 1).trim();
+    }
+    return row;
+  });
+
+  if (!rows.length) return { error: "That file has a header but no candidates." };
+  return { rows, columns, truncated: body.length > CSV_MAX_ROWS };
+}
+
+function importCandidatesForm(job) {
+  const preview = h("div", {});
+  const results = h("div", {});
+  const importBtn = h("button", { class: "btn btn-primary", type: "button", onclick: () => run() }, "Import candidates");
+  let pending = null;
+
+  async function choose(event) {
+    preview.replaceChildren();
+    results.replaceChildren();
+    pending = null;
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+
+    let parsed;
+    try {
+      parsed = rowsFromCsv(await file.text());
+    } catch {
+      return toast("That file couldn't be read.", "bad");
+    }
+    if (parsed.error) return toast(parsed.error, "bad");
+
+    pending = parsed.rows;
+    preview.replaceChildren(
+      h("p", { class: "hint", style: "margin:0 0 10px" },
+        `${parsed.rows.length} rows · mapped ${parsed.columns.join(", ")}` +
+        (parsed.truncated ? ` · only the first ${CSV_MAX_ROWS} will be imported` : "")),
+      h("table", { class: "table" },
+        h("thead", {}, h("tr", {}, CSV_FIELDS.map((f) => h("th", {}, humanize(f))))),
+        h("tbody", {}, parsed.rows.slice(0, 10).map((r) =>
+          h("tr", {}, CSV_FIELDS.map((f) => h("td", {}, r[f] || "—")))))),
+      h("div", { class: "actions", style: "margin-top:12px" }, importBtn));
+  }
+
+  async function run() {
+    if (!pending || !pending.length) return;
+    importBtn.disabled = true;
+    importBtn.textContent = "Importing…";
+    try {
+      const res = await api("POST", tenantPath("/candidates/import"), {
+        job_id: job.job_id,
+        rows: pending.map((r) => ({
+          first_name: r.first_name,
+          last_name: r.last_name,
+          email: r.email,
+          phone_e164: r.phone_e164 || null,
+        })),
+      });
+      results.replaceChildren(
+        h("dl", { class: "kv", style: "margin:16px 0 12px" },
+          h("dt", {}, "Created"), h("dd", {}, String(res.created)),
+          h("dt", {}, "Matched"), h("dd", {}, String(res.matched)),
+          h("dt", {}, "Duplicates"), h("dd", {}, String(res.duplicates)),
+          h("dt", {}, "Invalid"), h("dd", {}, String(res.invalid))),
+        h("table", { class: "table" },
+          h("thead", {}, h("tr", {}, ["Row", "Email", "Result", "Reason"].map((t) => h("th", {}, t)))),
+          h("tbody", {}, (res.results || []).map((r) =>
+            h("tr", {},
+              h("td", { class: "num muted" }, String(r.row)),
+              h("td", {}, r.email || "—"),
+              h("td", {}, badge(r.status)),
+              h("td", { class: "muted" }, r.reason || "—"))))));
+      toast(`${res.created} created · ${res.matched} matched · ${res.duplicates} duplicate · ${res.invalid} invalid`, res.invalid ? "bad" : "ok");
+    } catch (err) {
+      if (err.status === 401) return;
+      toast(err.message, "bad");
+    } finally {
+      importBtn.disabled = false;
+      importBtn.textContent = "Import candidates";
+    }
+  }
+
+  return h("div", {},
+    h("label", { class: "field-label" }, "CSV file"),
+    h("input", { class: "input", type: "file", accept: ".csv,text/csv", style: "padding:6px", onchange: choose }),
+    h("p", { class: "hint" }, `Columns: first_name, last_name, email, phone. A single name column is split on the first space. Email is required, up to ${CSV_MAX_ROWS} rows.`),
+    preview,
+    results);
+}
+
 // ---------------------------------------------------------------- applications list
 
 const PAGE = 50;
@@ -294,7 +774,13 @@ async function applicationsView() {
         h("td", {}, badge(a.stage)),
         h("td", { style: "width:200px" }, a.overall_score === null ? h("span", { class: "muted" }, "—") : meter(a.overall_score)),
         h("td", { class: "num muted" }, fmtDate(a.created_at)))) : [
-      h("tr", {}, h("td", { colspan: "5" }, h("div", { class: "empty" }, rows.length ? "No applications match your search." : "No applications yet."))),
+      h("tr", {}, h("td", { colspan: "5" }, rows.length
+        ? h("div", { class: "empty" }, "No applications match your search.")
+        : h("div", { class: "empty" },
+            h("p", { style: "margin:0 0 12px" }, "No applications yet. Create a job, then add or import candidates against it."),
+            can("job:write")
+              ? h("button", { class: "btn btn-primary", onclick: () => (location.hash = "#/jobs/new") }, "Create your first job")
+              : h("button", { class: "btn", onclick: () => (location.hash = "#/jobs") }, "Browse jobs")))),
     ]));
     more.hidden = exhausted || Boolean(needle);
   }
