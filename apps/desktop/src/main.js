@@ -13,7 +13,7 @@ const config = {
 const auth = new KeycloakAuth(config);
 let mainWindow = null;
 
-const ALLOWED_METHODS = new Set(["GET", "POST"]);
+const ALLOWED_METHODS = new Set(["GET", "POST", "PUT"]);
 
 async function send(method, apiPath, body, token) {
   try {

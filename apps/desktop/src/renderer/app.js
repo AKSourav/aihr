@@ -29,6 +29,22 @@ function recall() {
   try { return localStorage.getItem(STORAGE_KEY); } catch { return null; }
 }
 
+// The API returns an account id only when an organization is created, so the desktop app
+// keeps the org -> account mapping itself. Never holds anything secret.
+const ACCOUNT_KEY = "aihr.accounts";
+function accountMap() {
+  try { return JSON.parse(localStorage.getItem(ACCOUNT_KEY) || "{}") || {}; } catch { return {}; }
+}
+function accountFor(orgId) {
+  const value = accountMap()[orgId];
+  return typeof value === "string" ? value : null;
+}
+function rememberAccount(orgId, accountId) {
+  try {
+    localStorage.setItem(ACCOUNT_KEY, JSON.stringify({ ...accountMap(), [orgId]: accountId }));
+  } catch { /* storage unavailable */ }
+}
+
 const dateFmt = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 const dateTimeFmt = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 const fmtDate = (iso) => (iso ? dateFmt.format(new Date(iso)) : "—");
@@ -95,7 +111,11 @@ class ApiError extends Error {
 }
 
 async function api(method, path, body) {
-  const res = method === "GET" ? await window.aihr.get(path) : await window.aihr.post(path, body);
+  const res = method === "GET"
+    ? await window.aihr.get(path)
+    : method === "PUT"
+      ? await window.aihr.put(path, body)
+      : await window.aihr.post(path, body);
   if (res.status === 401) {
     showLogin("Your session ended. Please sign in again.");
     throw new ApiError(401, "signed out");
@@ -223,9 +243,11 @@ async function route() {
   if (!state.org) return foundTenantView();
 
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
-  setActiveNav(parts[0] === "jobs" ? "jobs" : "applications");
+  setActiveNav(parts[0] === "jobs" || parts[0] === "providers" ? parts[0] : "applications");
   try {
-    if (parts[0] === "jobs" && parts[1] === "new") {
+    if (parts[0] === "providers") {
+      providersView();
+    } else if (parts[0] === "jobs" && parts[1] === "new") {
       newJobView();
     } else if (parts[0] === "jobs" && parts[1]) {
       await jobView(parts[1]);
@@ -256,6 +278,7 @@ function foundTenantView() {
     error.hidden = true;
     try {
       const created = await api("POST", "/organizations", { name });
+      rememberAccount(created.org_id, created.account_id);
       state.me = await api("GET", "/me");
       state.org = state.me.memberships.find((m) => m.org_id === created.org_id) || null;
       if (state.org) remember(state.org.org_id);
@@ -510,12 +533,29 @@ async function jobView(jobId) {
           panel))
     : null;
 
+  const providerPanel = h("div", {});
+  const openProviders = () => {
+    if (providerPanel.firstChild) return providerPanel.replaceChildren();
+    const accountId = accountFor(state.org.org_id);
+    providerPanel.replaceChildren(h("div", { style: "margin-top:16px" }, accountId
+      ? providerSettingsCard(accountId, state.org.org_id, job.job_id)
+      : h("p", { class: "hint", style: "margin:0" },
+          "Set your account ID on the Providers screen before editing this role's providers.")));
+  };
+
   render(
     h("a", { class: "crumb", href: "#/jobs" }, "← Jobs"),
     h("div", { class: "page-head" },
       h("div", {}, h("h1", {}, job.title), h("div", { class: "sub" }, `Created ${fmtDateTime(job.created_at)}`)),
       h("div", { class: "toolbar" }, h("button", { class: "btn", onclick: route }, "Refresh"))),
     candidates,
+    h("div", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", {}, "Providers")),
+      h("div", { class: "card-body" },
+        h("div", { class: "actions" },
+          h("button", { class: "btn", onclick: openProviders }, "Provider settings")),
+        h("p", { class: "hint" }, "Keys and models for this role only. Blank fields inherit the organization's. Account owners only."),
+        providerPanel)),
     h("div", { class: "card" },
       h("div", { class: "card-head" }, h("h2", {}, "Rubric")),
       h("div", { class: "card-body" }, rubric.length
@@ -746,6 +786,203 @@ function importCandidatesForm(job) {
     h("p", { class: "hint" }, `Columns: first_name, last_name, email, phone. A single name column is split on the first space. Email is required, up to ${CSV_MAX_ROWS} rows.`),
     preview,
     results);
+}
+
+// ---------------------------------------------------------------- provider settings
+
+const PROVIDERS = ["openai", "deepgram", "cartesia", "elevenlabs"];
+const SELECTION_FIELDS = [
+  ["stt_provider", "Speech-to-text provider"],
+  ["stt_model", "Speech-to-text model"],
+  ["tts_provider", "Text-to-speech provider"],
+  ["tts_model", "Text-to-speech model"],
+  ["tts_voice_id", "Voice"],
+  ["llm_provider", "LLM provider"],
+  ["llm_call_model", "LLM model for calls"],
+  ["llm_summary_model", "LLM model for summaries"],
+  ["llm_base_url", "LLM base URL"],
+];
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const providerPath = (accountId, orgId, jobId) =>
+  `/accounts/${accountId}/tenants/${orgId}${jobId ? `/jobs/${jobId}` : ""}/provider-settings`;
+
+// The PUT replaces the whole selection and walks the whole credential list, so every field is
+// read back out of the form on save. A typed key is read straight off the input into the request
+// body and never stored anywhere else.
+function providerSettingsForm(accountId, orgId, jobId, settings, inherited, reload) {
+  const blank = jobId ? "Inherit from the organization" : "Not set";
+  const selection = settings.selection || {};
+  const fields = {};
+
+  const selectionRows = SELECTION_FIELDS.map(([key, label]) => {
+    const current = selection[key] || "";
+    let input;
+    if (key.endsWith("_provider")) {
+      const options = current && !PROVIDERS.includes(current) ? [...PROVIDERS, current] : PROVIDERS;
+      input = h("select", { class: "select" },
+        h("option", { value: "" }, blank),
+        options.map((p) => h("option", { value: p }, p)));
+    } else {
+      input = h("input", { class: "input", placeholder: blank });
+    }
+    input.value = current;
+    fields[key] = input;
+    return h("div", {},
+      h("label", { class: "field-label" }, label),
+      input,
+      inherited ? h("p", { class: "hint" }, `Organization: ${inherited[key] || "not set"}`) : null);
+  });
+
+  const stored = new Map((settings.credentials || []).map((c) => [c.provider, c]));
+  const rows = {};
+  const credentialRows = PROVIDERS.map((name) => {
+    const existing = stored.get(name);
+    const key = h("input", {
+      class: "input", type: "password", autocomplete: "off",
+      placeholder: existing ? "Leave blank to keep the stored key" : "Paste a key",
+    });
+    const baseUrl = h("input", { class: "input", placeholder: "Base URL (optional)" });
+    baseUrl.value = (existing && existing.base_url) || "";
+    const remove = h("input", { type: "checkbox", disabled: !existing });
+    rows[name] = { key, baseUrl, remove, existing: Boolean(existing) };
+
+    return h("div", { class: "rubric-item" },
+      h("div", { class: "label" },
+        h("span", {}, name),
+        h("span", { class: "muted" }, existing
+          ? `ends ${existing.key_last4} · updated ${fmtDateTime(existing.updated_at)}`
+          : "no key stored")),
+      h("div", { class: "actions", style: "margin-top:6px" },
+        h("div", { style: "flex:1 1 220px" }, key),
+        h("div", { style: "flex:1 1 220px" }, baseUrl),
+        h("label", { class: "hint", style: "margin:0;display:flex;align-items:center;gap:6px" },
+          remove, "Delete")));
+  });
+
+  function requestBody() {
+    const picked = {};
+    for (const [key] of SELECTION_FIELDS) picked[key] = fields[key].value.trim() || null;
+
+    const credentials = [];
+    for (const name of PROVIDERS) {
+      const row = rows[name];
+      const base_url = row.baseUrl.value.trim() || null;
+      if (row.remove.checked) credentials.push({ provider: name, api_key: "" });
+      else if (row.key.value) credentials.push({ provider: name, api_key: row.key.value, base_url });
+      else if (row.existing) credentials.push({ provider: name, base_url });
+    }
+    return { selection: picked, credentials };
+  }
+
+  const saveBtn = h("button", { class: "btn btn-primary", type: "submit" }, "Save providers");
+  const error = h("p", { class: "error" });
+  error.hidden = true;
+
+  async function save() {
+    error.hidden = true;
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Saving…";
+    try {
+      await api("PUT", providerPath(accountId, orgId, jobId), requestBody());
+      for (const name of PROVIDERS) rows[name].key.value = "";
+      toast("Provider settings saved.", "ok");
+      reload();
+    } catch (err) {
+      if (err.status === 401) return;
+      error.hidden = false;
+      error.textContent = err.message;
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Save providers";
+    }
+  }
+
+  return h("form", { onsubmit: (e) => { e.preventDefault(); save(); } },
+    h("div", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", {}, jobId ? "This role" : "Organization defaults"),
+        h("span", { class: "muted" }, jobId ? "blank inherits the organization" : "blank leaves the server default")),
+      h("div", { class: "card-body" }, h("div", { class: "grid" }, selectionRows))),
+    h("div", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", {}, "Keys"),
+        h("span", { class: "muted" }, "stored encrypted, never shown again")),
+      h("div", { class: "card-body" }, credentialRows,
+        h("p", { class: "hint" }, "A blank key keeps whatever is already stored. Tick Delete to remove one."))),
+    h("div", { class: "actions", style: "margin-top:16px" }, saveBtn),
+    error);
+}
+
+function providerSettingsCard(accountId, orgId, jobId) {
+  const container = h("div", {});
+
+  async function load() {
+    container.replaceChildren(h("div", { class: "spinner" }, "Loading…"));
+    try {
+      const [settings, organization] = await Promise.all([
+        api("GET", providerPath(accountId, orgId, jobId)),
+        jobId ? api("GET", providerPath(accountId, orgId, null)) : null,
+      ]);
+      container.replaceChildren(providerSettingsForm(
+        accountId, orgId, jobId, settings, organization && organization.selection, load));
+    } catch (err) {
+      if (err.status === 401) return;
+      const text = {
+        403: "Provider settings are owner-only. Ask the account owner to register keys and pick models.",
+        404: "That account ID doesn't match an organization you administer. Check it on the Providers screen.",
+      }[err.status] || err.message;
+      container.replaceChildren(h("div", { class: "card" }, h("div", { class: "empty" }, text)));
+    }
+  }
+
+  load();
+  return container;
+}
+
+function accountIdCard(orgId, current) {
+  const input = h("input", { class: "input", placeholder: "00000000-0000-0000-0000-000000000000" });
+  input.value = current;
+  const error = h("p", { class: "error" });
+  error.hidden = true;
+
+  function submit() {
+    const value = input.value.trim();
+    if (!UUID_RE.test(value)) {
+      error.hidden = false;
+      error.textContent = "That doesn't look like an account ID.";
+      return;
+    }
+    rememberAccount(orgId, value);
+    providersView();
+  }
+
+  return h("div", { class: "card" },
+    h("div", { class: "card-head" }, h("h2", {}, "Account ID")),
+    h("div", { class: "card-body" },
+      h("p", { class: "muted" },
+        "Provider keys belong to the account that owns this organization. The API reports the " +
+        "account ID when an organization is created; paste it once and this machine remembers it."),
+      h("form", { class: "form", onsubmit: (e) => { e.preventDefault(); submit(); } },
+        h("div", {}, h("label", { class: "field-label" }, "Account ID"), input),
+        h("div", { class: "actions" }, h("button", { class: "btn btn-primary", type: "submit" }, "Continue")),
+        error)));
+}
+
+function providersView() {
+  const orgId = state.org.org_id;
+  const accountId = accountFor(orgId);
+
+  const head = (...tools) => h("div", { class: "page-head" },
+    h("div", {}, h("h1", {}, "Providers"),
+      h("div", { class: "sub" }, `Speech and model vendors for ${state.org.org_name}`)),
+    h("div", { class: "toolbar" }, tools));
+
+  if (!accountId) return render(head(), accountIdCard(orgId, ""));
+
+  render(
+    head(
+      h("button", { class: "btn btn-sm btn-ghost", onclick: () => render(head(), accountIdCard(orgId, accountId)) }, "Change account ID"),
+      h("button", { class: "btn", onclick: route }, "Refresh")),
+    providerSettingsCard(accountId, orgId, null));
 }
 
 // ---------------------------------------------------------------- applications list
