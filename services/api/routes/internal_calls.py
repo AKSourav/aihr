@@ -1,3 +1,4 @@
+import hmac
 import logging
 from uuid import UUID
 
@@ -8,7 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.db import get_session
 from core.models import AuditEvent, Call, Organization
 from core.redaction import redact
-from core.schemas import CallContext, CallMode, CallOutcome, QuestionPlan
+from core.providers import resolve_providers
+from core.schemas import (
+    CallContext,
+    CallMode,
+    CallOutcome,
+    CallProviders,
+    QuestionPlan,
+)
 from core.settings import get_settings
 from core.storage import Storage
 from services.api.temporal import screening_workflow_id, temporal_client
@@ -21,7 +29,7 @@ router = APIRouter(prefix="/internal/calls", tags=["internal"])
 def require_internal_token(authorization: str = Header(default="")) -> None:
     settings = get_settings()
     expected = f"Bearer {settings.internal_api_token}"
-    if authorization != expected:
+    if not hmac.compare_digest(authorization, expected):
         raise HTTPException(status_code=401, detail="invalid internal token")
 
 
@@ -52,6 +60,49 @@ async def get_call_context(call_id: UUID, session: AsyncSession = Depends(get_se
         recording_consent_on_file=candidate.consent_recording_at is not None,
         max_minutes=question_plan.max_minutes,
     )
+
+
+@router.get(
+    "/{call_id}/providers",
+    response_model=CallProviders,
+    dependencies=[Depends(require_internal_token)],
+)
+async def get_call_providers(
+    call_id: UUID, session: AsyncSession = Depends(get_session)
+) -> CallProviders:
+    call = await session.scalar(select(Call).where(Call.id == call_id))
+    if call is None:
+        raise HTTPException(status_code=404, detail="call not found")
+
+    job = call.application.job
+    organization = await session.get(Organization, job.org_id)
+    if organization is None:
+        raise HTTPException(status_code=404, detail="organization not found")
+
+    try:
+        resolved = await resolve_providers(session, organization, job)
+    except Exception as exc:
+        logger.warning(
+            "providers unresolved", extra={"call_id": str(call_id), "error": str(exc)}
+        )
+        raise HTTPException(status_code=409, detail="providers are not configured") from exc
+
+    session.add(
+        AuditEvent(
+            org_id=job.org_id,
+            entity_type="call",
+            entity_id=call.id,
+            event_type="provider_credentials_issued",
+            payload={
+                "stt": resolved.stt.provider,
+                "tts": resolved.tts.provider,
+                "llm": resolved.llm_call.provider,
+            },
+        )
+    )
+    await session.commit()
+
+    return CallProviders(stt=resolved.stt, tts=resolved.tts, llm=resolved.llm_call)
 
 
 @router.post("/{call_id}/complete", dependencies=[Depends(require_internal_token)])

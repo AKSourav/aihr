@@ -6,9 +6,10 @@ from temporalio import activity
 
 from core.db import async_session
 from core.fairness import protected_terms
-from core.models import AuditEvent, Call
+from core.models import AuditEvent, Call, Organization
 from core.models import CallSummary as CallSummaryRow
 from core.models import LlmUsage, Score
+from core.providers import resolve_providers
 from core.schemas import Turn
 from core.settings import get_settings
 from core.storage import Storage
@@ -48,11 +49,25 @@ async def summarize_call(input: SummarizeCallInput) -> None:
             return
 
         job = call.application.job
+        organization = await session.get(Organization, job.org_id)
+        summary_llm = None
+        if organization is not None:
+            try:
+                summary_llm = (await resolve_providers(session, organization, job)).llm_summary
+            except Exception as exc:
+                logger.warning(
+                    "falling back to platform summary model",
+                    extra={"call_id": input.call_id, "error": str(exc)},
+                )
+
         key = call.transcript_url.removeprefix(f"s3://{settings.s3_bucket}/")
         transcript_data = Storage().download_json(key)
         transcript = [Turn.model_validate(turn) for turn in transcript_data]
 
-        summary, usage = await summarize_transcript(job.title, job.rubric, job.question_plan, transcript)
+        summary, usage = await summarize_transcript(
+            job.title, job.rubric, job.question_plan, transcript, summary_llm
+        )
+        summary_model = (summary_llm.model if summary_llm else "") or settings.llm_summary_model
 
         kept_flags, dropped_flags = [], []
         for flag in summary.red_flags:
@@ -90,7 +105,7 @@ async def summarize_call(input: SummarizeCallInput) -> None:
             LlmUsage(
                 org_id=call.org_id,
                 call_id=call_id,
-                model=settings.llm_summary_model,
+                model=summary_model,
                 prompt_tokens=usage.prompt_tokens,
                 completion_tokens=usage.completion_tokens,
             )
@@ -105,7 +120,7 @@ async def summarize_call(input: SummarizeCallInput) -> None:
                 red_flags=summary.red_flags,
                 candidate_questions=summary.candidate_questions,
                 confidence=summary.confidence,
-                model_version=settings.llm_summary_model,
+                model_version=summary_model,
                 prompt_version=PROMPT_VERSION,
             )
         )
