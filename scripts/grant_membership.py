@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db import async_session
-from core.models import Account, Membership, Organization, User
+from core.models import Membership, Organization, User
 
 
 async def upsert_user(session: AsyncSession, sub: str, email: str, platform_admin: bool) -> User:
@@ -29,19 +29,9 @@ async def grant(
     org_name: str | None,
     role: str | None,
     platform_admin: bool,
-    account_name: str | None,
-    account_role: str | None,
 ) -> None:
     async with async_session() as session:
         user = await upsert_user(session, sub, email, platform_admin)
-
-        if account_name:
-            account = await session.scalar(select(Account).where(Account.name == account_name))
-            if account is None:
-                raise SystemExit(f"no account named {account_name!r}")
-            user.account_id = account.id
-        if account_role:
-            user.account_role = account_role
 
         if org_name and role:
             org = await session.scalar(select(Organization).where(Organization.name == org_name))
@@ -69,23 +59,11 @@ def main() -> None:
     parser.add_argument("--sub", required=True)
     parser.add_argument("--email", required=True)
     parser.add_argument("--org")
-    parser.add_argument("--role", choices=["admin", "recruiter", "viewer"])
+    parser.add_argument("--role", choices=["owner", "admin", "recruiter", "viewer"])
     parser.add_argument("--platform-admin", action="store_true")
-    parser.add_argument("--account")
-    parser.add_argument("--account-role", choices=["owner", "member"])
     args = parser.parse_args()
 
-    asyncio.run(
-        grant(
-            args.sub,
-            args.email,
-            args.org,
-            args.role,
-            args.platform_admin,
-            args.account,
-            args.account_role,
-        )
-    )
+    asyncio.run(grant(args.sub, args.email, args.org, args.role, args.platform_admin))
 
 
 if __name__ == "__main__":

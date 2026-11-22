@@ -15,20 +15,12 @@ let mainWindow = null;
 
 const ALLOWED_METHODS = new Set(["GET", "POST"]);
 
-// The renderer can only call the aihr API, by path, through here. It never sees a token.
-async function apiRequest(_event, { method = "GET", path: apiPath, body } = {}) {
-  if (!ALLOWED_METHODS.has(method) || typeof apiPath !== "string" || !apiPath.startsWith("/") || apiPath.startsWith("//")) {
-    return { ok: false, status: 400, data: { detail: "invalid request" } };
-  }
-
-  const token = await auth.accessToken();
-  if (!token) return { ok: false, status: 401, data: { detail: "signed out" } };
-
+async function send(method, apiPath, body, token) {
   try {
     const response = await fetch(config.apiUrl + apiPath, {
       method,
       headers: {
-        Authorization: `Bearer ${token}`,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -44,6 +36,23 @@ async function apiRequest(_event, { method = "GET", path: apiPath, body } = {}) 
   } catch (err) {
     return { ok: false, status: 0, data: { detail: `Cannot reach the API at ${config.apiUrl} (${err.cause?.code || err.message})` } };
   }
+}
+
+// The renderer can only call the aihr API, by path, through here. It never sees a token.
+async function apiRequest(_event, { method = "GET", path: apiPath, body } = {}) {
+  if (!ALLOWED_METHODS.has(method) || typeof apiPath !== "string" || !apiPath.startsWith("/") || apiPath.startsWith("//")) {
+    return { ok: false, status: 400, data: { detail: "invalid request" } };
+  }
+
+  const token = await auth.accessToken();
+  if (!token) return { ok: false, status: 401, data: { detail: "signed out" } };
+
+  return send(method, apiPath, body, token);
+}
+
+// Signup is the one call made before there is anything to authenticate with.
+async function signupRequest(_event, body) {
+  return send("POST", "/signup", body);
 }
 
 function createWindow() {
@@ -87,6 +96,7 @@ ipcMain.handle("auth:logout", async () => {
   return { ok: true };
 });
 ipcMain.handle("api:request", apiRequest);
+ipcMain.handle("api:signup", signupRequest);
 
 app.whenReady().then(() => {
   createWindow();

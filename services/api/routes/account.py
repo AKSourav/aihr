@@ -9,14 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db import get_session
 from core.models import Membership, Organization, User
-from core.permissions import ADMIN, MEMBER, OWNER
+from core.permissions import ADMIN, OWNER
 from services.api import keycloak_admin
 from services.api.account_authz import AccountContext, account_context, authorize_grants, owner_only
 
 router = APIRouter(prefix="/accounts/{account_id}", tags=["accounts"])
 
-TenantRole = Literal["admin", "recruiter", "viewer"]
-AccountRole = Literal["owner", "member"]
+TenantRole = Literal["owner", "admin", "recruiter", "viewer"]
 
 
 class MembershipGrant(BaseModel):
@@ -26,7 +25,6 @@ class MembershipGrant(BaseModel):
 
 class InvitationRequest(BaseModel):
     email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=320)
-    account_role: AccountRole = MEMBER
     memberships: list[MembershipGrant] = Field(default_factory=list)
 
 
@@ -38,7 +36,6 @@ class MembershipOut(BaseModel):
 class MemberOut(BaseModel):
     user_id: UUID
     email: str
-    account_role: str
     memberships: list[MembershipOut]
 
 
@@ -74,9 +71,21 @@ async def member_out(session: AsyncSession, user: User) -> MemberOut:
     return MemberOut(
         user_id=user.id,
         email=user.email,
-        account_role=user.account_role,
         memberships=[MembershipOut(org_id=row.org_id, role=row.role) for row in rows],
     )
+
+
+async def memberships_in_account(
+    session: AsyncSession, context: AccountContext, user_id: UUID
+) -> dict[UUID, str]:
+    rows = (
+        await session.execute(
+            select(Membership.org_id, Membership.role)
+            .join(Organization, Organization.id == Membership.org_id)
+            .where(Membership.user_id == user_id, Organization.account_id == context.account_id)
+        )
+    ).all()
+    return {row.org_id: row.role for row in rows}
 
 
 async def reconcile(session: AsyncSession, user: User, desired: dict[UUID, str]) -> None:
@@ -103,14 +112,12 @@ async def invite(
     grants = requested_roles(body.memberships)
     await authorize_grants(session, context, grants)
 
-    if body.account_role == OWNER and not context.is_owner:
+    if OWNER in grants.values() and not context.is_owner:
         raise HTTPException(status_code=403, detail="forbidden")
 
     email = body.email.lower()
     email_sent = False
     user = await session.scalar(select(User).where(User.email == email))
-    if user is not None and user.account_id is not None and user.account_id != context.account_id:
-        raise HTTPException(status_code=409, detail="that address is already in use")
 
     try:
         async with httpx.AsyncClient(timeout=keycloak_admin.TIMEOUT) as client:
@@ -131,8 +138,6 @@ async def invite(
     if user is None:
         user = User(keycloak_sub=subject, email=email)
         session.add(user)
-    user.account_id = context.account_id
-    user.account_role = body.account_role
     await session.flush()
 
     await reconcile(session, user, grants)
@@ -150,7 +155,12 @@ async def list_members(
 ) -> list[MemberOut]:
     users = (
         await session.scalars(
-            select(User).where(User.account_id == context.account_id).order_by(User.email)
+            select(User)
+            .join(Membership, Membership.user_id == User.id)
+            .join(Organization, Organization.id == Membership.org_id)
+            .where(Organization.account_id == context.account_id)
+            .order_by(User.email)
+            .distinct()
         )
     ).all()
     return [await member_out(session, user) for user in users]
@@ -158,7 +168,11 @@ async def list_members(
 
 async def member_of_account(session: AsyncSession, context: AccountContext, user_id: UUID) -> User:
     user = await session.scalar(
-        select(User).where(User.id == user_id, User.account_id == context.account_id)
+        select(User)
+        .join(Membership, Membership.user_id == User.id)
+        .join(Organization, Organization.id == Membership.org_id)
+        .where(User.id == user_id, Organization.account_id == context.account_id)
+        .limit(1)
     )
     if user is None:
         raise HTTPException(status_code=404, detail="not found")
@@ -175,20 +189,20 @@ async def replace_memberships(
     target = await member_of_account(session, context, user_id)
     desired = requested_roles(body.memberships)
 
-    current = {
-        row.org_id: row.role
-        for row in (
-            await session.scalars(select(Membership).where(Membership.user_id == target.id))
-        ).all()
-    }
+    current = await memberships_in_account(session, context, target.id)
     touched = set(desired) | {
         org_id for org_id, role in current.items() if desired.get(org_id) != role
     }
     await authorize_grants(session, context, touched, target)
 
+    if OWNER in desired.values() and not context.is_owner:
+        raise HTTPException(status_code=403, detail="forbidden")
+
     if target.id == context.user.id:
         losing_admin = [
-            org_id for org_id, role in current.items() if role == ADMIN and desired.get(org_id) != ADMIN
+            org_id
+            for org_id, role in current.items()
+            if role in (OWNER, ADMIN) and desired.get(org_id) != role
         ]
         if losing_admin:
             raise HTTPException(status_code=403, detail="cannot remove your own admin role")
@@ -213,18 +227,17 @@ async def revoke_memberships(
     session: AsyncSession = Depends(get_session),
 ) -> MemberOut:
     target = await member_of_account(session, context, user_id)
-    current = {
-        row.org_id
-        for row in (
-            await session.scalars(select(Membership).where(Membership.user_id == target.id))
-        ).all()
-    }
+    current = set(await memberships_in_account(session, context, target.id))
     await authorize_grants(session, context, current, target)
 
     if target.id == context.user.id:
         raise HTTPException(status_code=403, detail="cannot revoke your own access")
 
-    await session.execute(delete(Membership).where(Membership.user_id == target.id))
+    await session.execute(
+        delete(Membership).where(
+            Membership.user_id == target.id, Membership.org_id.in_(current)
+        )
+    )
     await session.commit()
 
     return await member_out(session, target)

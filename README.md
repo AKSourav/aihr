@@ -67,7 +67,9 @@ The two layers answer differently on purpose. A tenant the caller has no members
 
 ### Inviting people
 
-`make dev` bootstraps the account owner and the platform admin with `scripts/grant_membership.py`, then invites the recruiter and the viewer **through the API** — because only those two cannot come from it. Nothing may create the first owner, and `is_platform_admin` is deliberately not settable over HTTP.
+Anyone may create their own organization: `POST /signup` makes the Keycloak identity, the account, the organization and an owner membership, and Keycloak emails a set-password link. `POST /organizations` does the same for someone who already has an identity but no memberships.
+
+`make dev` still bootstraps its owner and platform admin with `scripts/grant_membership.py`, because those two need the Keycloak subjects the realm import fixed in advance, then invites the recruiter and the viewer **through the API**. `is_platform_admin` is deliberately not settable over HTTP.
 
 ```bash
 ACCOUNT=$(docker compose exec -T postgres psql -U app -d hr -tAc \

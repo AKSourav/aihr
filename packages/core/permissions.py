@@ -15,14 +15,24 @@ class Permission(StrEnum):
     SCORE_READ = "score:read"
 
 
+OWNER = "owner"
 ADMIN = "admin"
 RECRUITER = "recruiter"
 VIEWER = "viewer"
 
-OWNER = "owner"
-MEMBER = "member"
-
 ROLE_PERMISSIONS: dict[str, list[Permission]] = {
+    OWNER: [
+        Permission.TENANT_CREATE,
+        Permission.USER_INVITE,
+        Permission.JOB_READ,
+        Permission.JOB_WRITE,
+        Permission.CANDIDATE_READ,
+        Permission.CANDIDATE_WRITE,
+        Permission.CALL_CREATE,
+        Permission.CALL_READ,
+        Permission.TRANSCRIPT_READ,
+        Permission.SCORE_READ,
+    ],
     ADMIN: [
         Permission.USER_INVITE,
         Permission.JOB_READ,
@@ -49,11 +59,6 @@ ROLE_PERMISSIONS: dict[str, list[Permission]] = {
         Permission.CALL_READ,
         Permission.SCORE_READ,
     ],
-}
-
-ACCOUNT_ROLE_PERMISSIONS: dict[str, list[Permission]] = {
-    OWNER: [Permission.TENANT_CREATE, Permission.USER_INVITE],
-    MEMBER: [],
 }
 
 SENSITIVE: frozenset[Permission] = frozenset(
@@ -92,6 +97,7 @@ PLATFORM_ROUTES: list[tuple[str, str]] = [
 # Routes any authenticated caller may reach; they only ever describe the caller themselves.
 SELF_ROUTES: list[tuple[str, str]] = [
     ("GET", "/me"),
+    ("POST", "/organizations"),
 ]
 
 
@@ -144,7 +150,3 @@ def role_permission_table() -> dict[str, list[str]]:
 
 def grants(role: str, permission: Permission) -> bool:
     return permission in ROLE_PERMISSIONS.get(role, [])
-
-
-def account_grants(account_role: str, permission: Permission) -> bool:
-    return permission in ACCOUNT_ROLE_PERMISSIONS.get(account_role, [])

@@ -8,9 +8,11 @@ from services.api.routes import (
     internal_calls,
     me,
     opa,
+    organizations,
     platform,
     public_invites,
     screenings,
+    signup,
     tenant,
 )
 
@@ -24,8 +26,10 @@ app.include_router(opa.router)
 app.include_router(platform.router)
 app.include_router(tenant.router)
 app.include_router(me.router)
+app.include_router(organizations.router)
 app.include_router(screenings.router)
 app.include_router(public_invites.router)
+app.include_router(signup.router)
 if get_settings().dev_routes_enabled:
     app.include_router(dev.router)
 

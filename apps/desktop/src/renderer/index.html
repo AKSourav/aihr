@@ -14,6 +14,21 @@
       <p class="muted">Review candidates, screening calls and AI summaries, and send screening invites.</p>
       <button id="login-btn" class="btn btn-primary btn-block">Sign in with Keycloak</button>
       <p id="login-error" class="error" hidden></p>
+
+      <form id="signup" class="form" hidden>
+        <div>
+          <label class="field-label" for="signup-email">Work email</label>
+          <input id="signup-email" class="input" type="email" autocomplete="email" required />
+        </div>
+        <div>
+          <label class="field-label" for="signup-org">Organization name</label>
+          <input id="signup-org" class="input" maxlength="200" required />
+        </div>
+        <button id="signup-btn" class="btn btn-primary btn-block" type="submit">Create organization</button>
+        <p id="signup-error" class="error" hidden></p>
+      </form>
+
+      <button id="signup-toggle" class="btn btn-ghost btn-sm btn-block">New here? Create an organization</button>
       <p id="login-env" class="fine"></p>
     </div>
   </div>

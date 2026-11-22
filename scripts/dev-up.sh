@@ -77,7 +77,7 @@ docker compose exec -T api python -m scripts.seed
 
 say "Bootstrapping the account owner and the platform admin"
 docker compose exec -T api python -m scripts.grant_membership \
-  --sub "$OWNER_SUB" --email hr@acme.test --account "Acme Group" --account-role owner
+  --sub "$OWNER_SUB" --email hr@acme.test --org "Acme Fintech" --role owner
 docker compose exec -T api python -m scripts.grant_membership \
   --sub "$ROOT_SUB" --email root@aihr.test --platform-admin
 

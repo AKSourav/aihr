@@ -197,10 +197,11 @@ async def test_break_glass_for_one_admin_does_not_cover_another(session: AsyncSe
     assert excinfo.value.status_code == 404
 
 
-async def test_account_owner_may_not_read_tenant_data_without_membership(
+async def test_an_owner_of_one_tenant_may_not_read_another(
     session: AsyncSession, two_tenants
 ):
-    owner = await make_user(session, account_role="owner")
+    owner = await make_user(session)
+    await grant(session, owner, two_tenants["org_b"], "owner")
 
     with pytest.raises(HTTPException) as excinfo:
         await context_for(session, owner, two_tenants["org_a"])

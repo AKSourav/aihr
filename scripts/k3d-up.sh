@@ -103,7 +103,7 @@ kubectl exec -n "$NAMESPACE" deployment/aihr-api -- python -m scripts.seed
 say "Bootstrapping the account owner and the platform admin"
 kubectl exec -n "$NAMESPACE" deployment/aihr-api -- \
   python -m scripts.grant_membership --sub "$OWNER_SUB" --email hr@acme.test \
-  --account "Acme Group" --account-role owner
+  --org "Acme Fintech" --role owner
 kubectl exec -n "$NAMESPACE" deployment/aihr-api -- \
   python -m scripts.grant_membership --sub "$ROOT_SUB" --email root@aihr.test --platform-admin
 
