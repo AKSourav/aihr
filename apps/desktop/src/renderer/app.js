@@ -893,6 +893,11 @@ function providerSettingsForm(accountId, orgId, jobId, settings, inherited, relo
 function providerSettingsCard(accountId, orgId, jobId) {
   const container = h("div", {});
 
+  if (!accountId) {
+    return h("div", { class: "card" }, h("div", { class: "empty" },
+      "This session started before provider settings existed. Sign out and back in to continue."));
+  }
+
   async function load() {
     container.replaceChildren(h("div", { class: "spinner" }, "Loading…"));
     try {
