@@ -66,6 +66,7 @@ def test_self_route_table_is_anchored():
     assert self_route_table() == [
         {"method": "GET", "pattern": path_pattern("/me")},
         {"method": "POST", "pattern": path_pattern("/organizations")},
+        {"method": "GET", "pattern": path_pattern("/provider-catalogue")},
     ]
     assert path_pattern("/me") == "^/me$"
     assert path_pattern("/organizations") == "^/organizations$"

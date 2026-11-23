@@ -84,24 +84,22 @@ ROUTES: list[tuple[str, str, Permission]] = [
     ("GET", "/tenants/{org_id}/jobs", Permission.JOB_READ),
     ("POST", "/tenants/{org_id}/jobs/drafts", Permission.JOB_WRITE),
     ("GET", "/tenants/{org_id}/jobs/{job_id}", Permission.JOB_READ),
+    ("GET", "/tenants/{org_id}/jobs/{job_id}/provider-settings", Permission.JOB_WRITE),
+    ("PUT", "/tenants/{org_id}/jobs/{job_id}/provider-settings", Permission.JOB_WRITE),
     ("POST", "/tenants/{org_id}/candidates", Permission.CANDIDATE_WRITE),
     ("POST", "/tenants/{org_id}/candidates/import", Permission.CANDIDATE_WRITE),
     ("POST", "/tenants/{org_id}/applications", Permission.CANDIDATE_WRITE),
 ]
 
 ACCOUNT_ROUTES: list[tuple[str, str, Permission]] = [
+    ("GET", "/accounts/{account_id}/secrets", Permission.TENANT_CREATE),
+    ("POST", "/accounts/{account_id}/secrets", Permission.TENANT_CREATE),
+    ("PUT", "/accounts/{account_id}/secrets/{secret_id}", Permission.TENANT_CREATE),
+    ("DELETE", "/accounts/{account_id}/secrets/{secret_id}", Permission.TENANT_CREATE),
+    ("GET", "/accounts/{account_id}/provider-settings", Permission.TENANT_CREATE),
+    ("PUT", "/accounts/{account_id}/provider-settings", Permission.TENANT_CREATE),
     ("GET", "/accounts/{account_id}/tenants/{org_id}/provider-settings", Permission.TENANT_CREATE),
     ("PUT", "/accounts/{account_id}/tenants/{org_id}/provider-settings", Permission.TENANT_CREATE),
-    (
-        "GET",
-        "/accounts/{account_id}/tenants/{org_id}/jobs/{job_id}/provider-settings",
-        Permission.TENANT_CREATE,
-    ),
-    (
-        "PUT",
-        "/accounts/{account_id}/tenants/{org_id}/jobs/{job_id}/provider-settings",
-        Permission.TENANT_CREATE,
-    ),
     ("POST", "/accounts/{account_id}/invitations", Permission.USER_INVITE),
     ("GET", "/accounts/{account_id}/members", Permission.USER_INVITE),
     ("PATCH", "/accounts/{account_id}/members/{user_id}", Permission.USER_INVITE),
@@ -117,6 +115,7 @@ PLATFORM_ROUTES: list[tuple[str, str]] = [
 SELF_ROUTES: list[tuple[str, str]] = [
     ("GET", "/me"),
     ("POST", "/organizations"),
+    ("GET", "/provider-catalogue"),
 ]
 
 

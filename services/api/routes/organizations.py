@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db import get_session
-from core.models import Account, Membership, Organization, User
+from core.models import Account, AccountOwner, Membership, Organization, User
 from core.permissions import OWNER
 from services.api.auth import current_user
 
@@ -33,6 +33,7 @@ async def found_organization(session: AsyncSession, user: User, name: str) -> Or
     await session.flush()
 
     session.add(Membership(user_id=user.id, org_id=organization.id, role=OWNER))
+    session.add(AccountOwner(account_id=account.id, user_id=user.id))
     return organization
 
 

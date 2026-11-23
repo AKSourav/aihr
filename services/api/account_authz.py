@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db import get_session
-from core.models import Membership, Organization, User
+from core.models import AccountOwner, Membership, Organization, User
 from core.permissions import ADMIN, OWNER
 from services.api.auth import current_user
 
@@ -21,13 +21,8 @@ class AccountContext:
 
 async def owns_account(session: AsyncSession, user_id: UUID, account_id: UUID) -> bool:
     found = await session.scalar(
-        select(Membership.id)
-        .join(Organization, Organization.id == Membership.org_id)
-        .where(
-            Membership.user_id == user_id,
-            Membership.role == OWNER,
-            Organization.account_id == account_id,
-        )
+        select(AccountOwner.id)
+        .where(AccountOwner.account_id == account_id, AccountOwner.user_id == user_id)
         .limit(1)
     )
     return found is not None
@@ -102,7 +97,7 @@ async def authorize_grants(
         ).all()
     }
 
-    is_owner = OWNER in held.values()
+    is_owner = await owns_account(session, context.user.id, context.account_id)
     if not is_owner:
         administered = {org_id for org_id, role in held.items() if role == ADMIN}
         if not administered or requested - administered:

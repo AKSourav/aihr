@@ -111,6 +111,10 @@ textarea.input { min-height: 160px; resize: vertical; font: inherit; }
 .nav { margin-top: 20px; display: flex; flex-direction: column; gap: 2px; }
 .nav-item { color: var(--muted); padding: 7px 10px; border-radius: 7px; font-weight: 550; }
 .nav-item.active { background: var(--accent-soft); color: var(--accent); }
+.nav-section {
+  margin: 16px 0 2px; padding: 0 10px; font-size: 11px; font-weight: 650;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--faint);
+}
 .sidebar-foot { margin-top: auto; padding-top: 16px; border-top: 1px solid var(--line); }
 .whoami { font-size: 12px; color: var(--muted); margin-bottom: 8px; overflow-wrap: anywhere; }
 .whoami strong { display: block; color: var(--text); font-weight: 600; }
@@ -171,6 +175,21 @@ textarea.input { min-height: 160px; resize: vertical; font: inherit; }
 .list { margin: 0; padding-left: 18px; }
 .list li + li { margin-top: 4px; }
 .summary-text { font-size: 15px; line-height: 1.6; margin: 0; }
+
+/* Provider slots */
+.slot { display: grid; grid-template-columns: 210px 1fr; gap: 24px; padding: 16px 18px; }
+.slot + .slot, .card-body + .slot { border-top: 1px solid var(--line); }
+.slot-name { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.slot-why { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.controls { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); align-items: start; }
+.foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 14px 18px; border-top: 1px solid var(--line);
+}
+.foot .error { margin: 0; }
+.foot .actions { margin-left: auto; }
+.name { font-weight: 600; }
+@media (max-width: 1100px) { .slot { grid-template-columns: 1fr; gap: 12px; } }
 
 /* Transcript */
 .transcript { display: flex; flex-direction: column; gap: 10px; }

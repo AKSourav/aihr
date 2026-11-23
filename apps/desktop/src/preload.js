@@ -7,5 +7,6 @@ contextBridge.exposeInMainWorld("aihr", {
   get: (path) => ipcRenderer.invoke("api:request", { method: "GET", path }),
   post: (path, body) => ipcRenderer.invoke("api:request", { method: "POST", path, body }),
   put: (path, body) => ipcRenderer.invoke("api:request", { method: "PUT", path, body }),
+  del: (path) => ipcRenderer.invoke("api:request", { method: "DELETE", path }),
   signup: (body) => ipcRenderer.invoke("api:signup", body),
 });
