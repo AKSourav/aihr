@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db import get_session
-from core.models import Membership, User
+from core.models import AccountOwner, Membership, User
 from core.permissions import Permission
 from core.settings import get_settings
 from services.api import auth, keycloak_admin
@@ -34,6 +34,10 @@ async def grant(session: AsyncSession, user: User, org_id, role: str) -> None:
 async def make_owner(session: AsyncSession, two_tenants) -> User:
     user = await make_user(session)
     await grant(session, user, two_tenants["org_a"], "owner")
+    session.add(
+        AccountOwner(id=uuid.uuid4(), account_id=two_tenants["account"], user_id=user.id)
+    )
+    await session.flush()
     return user
 
 

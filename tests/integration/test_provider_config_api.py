@@ -8,12 +8,22 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db import get_session
-from core.models import Membership, Organization, ProviderCredential, User
-from core.secrets import decrypt_secret, encrypt_secret, last4
+from core.models import Account, AccountOwner, Job, Membership, Organization, Secret, User
+from core.secrets import decrypt_secret
 from core.settings import get_settings
 from services.api import auth
 
 SECRET = "sk-provider-wxyz"
+
+HOSTILE_URLS = [
+    "http://169.254.169.254/latest/meta-data/",
+    "https://127.0.0.1/v1",
+    "https://localhost/v1",
+    "https://keycloak/v1",
+    "https://0x7f.0.0.1/v1",
+    "file:///etc/passwd",
+    "https://user:pass@gw.example.com/v1",
+]
 
 
 @pytest.fixture(autouse=True)
@@ -51,6 +61,12 @@ async def member(session: AsyncSession, org_id, role: str) -> User:
     session.add(user)
     await session.flush()
     session.add(Membership(id=uuid.uuid4(), user_id=user.id, org_id=org_id, role=role))
+    if role == "owner":
+        organization = await session.get(Organization, org_id)
+        assert organization is not None
+        session.add(
+            AccountOwner(id=uuid.uuid4(), account_id=organization.account_id, user_id=user.id)
+        )
     await session.flush()
     return user
 
@@ -59,256 +75,292 @@ def header(user: User) -> dict:
     return {"Authorization": f"Bearer {user.keycloak_sub}"}
 
 
-def path(two_tenants, suffix=""):
-    return (
-        f"/accounts/{two_tenants['account']}/tenants/{two_tenants['org_a']}"
-        f"{suffix}/provider-settings"
+def base(two_tenants) -> str:
+    return f"/accounts/{two_tenants['account']}"
+
+
+def tenant(two_tenants) -> str:
+    return f"/accounts/{two_tenants['account']}/tenants/{two_tenants['org_a']}"
+
+
+def account_secrets(two_tenants):
+    return select(Secret).where(Secret.account_id == two_tenants["account"])
+
+
+async def make_secret(client, two_tenants, owner, name: str, value: str = SECRET):
+    return await client.post(
+        f"{base(two_tenants)}/secrets",
+        headers=header(owner),
+        json={"name": name, "value": value},
     )
 
 
-async def test_an_owner_stores_a_credential_and_never_reads_it_back(client, session, two_tenants):
+async def test_a_secret_is_stored_encrypted_and_never_returned(client, session, two_tenants):
     owner = await member(session, two_tenants["org_a"], "owner")
+
+    created = await make_secret(client, two_tenants, owner, "OpenAI production")
+    listed = await client.get(f"{base(two_tenants)}/secrets", headers=header(owner))
+
+    assert created.status_code == 201
+    assert listed.status_code == 200
+    assert SECRET not in created.text
+    assert SECRET not in listed.text
+    assert created.json()["last4"] == "wxyz"
+    assert "value" not in created.json()
+
+    row = await session.scalar(select(Secret).where(Secret.name == "OpenAI production"))
+    assert row is not None
+    assert SECRET not in row.ciphertext
+    assert decrypt_secret(row.ciphertext) == SECRET
+
+
+async def test_two_secrets_for_the_same_provider_coexist(client, session, two_tenants):
+    owner = await member(session, two_tenants["org_a"], "owner")
+
+    first = await make_secret(client, two_tenants, owner, "OpenAI production", "prod-1111")
+    second = await make_secret(client, two_tenants, owner, "Northwind OpenAI", "client-2222")
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["secret_id"] != second.json()["secret_id"]
+    assert len((await session.scalars(account_secrets(two_tenants))).all()) == 2
+
+
+async def test_a_duplicate_name_is_refused(client, session, two_tenants):
+    owner = await member(session, two_tenants["org_a"], "owner")
+    await make_secret(client, two_tenants, owner, "Deepgram")
+
+    again = await make_secret(client, two_tenants, owner, "Deepgram")
+
+    assert again.status_code == 409
+
+
+async def test_used_by_names_where_a_secret_is_referenced(client, session, two_tenants):
+    owner = await member(session, two_tenants["org_a"], "owner")
+    secret_id = (await make_secret(client, two_tenants, owner, "OpenAI production")).json()[
+        "secret_id"
+    ]
+
+    await client.put(
+        f"{base(two_tenants)}/provider-settings",
+        headers=header(owner),
+        json={"selection": {"llm_call": {"provider": "openai", "secret_id": secret_id}}},
+    )
+    listed = await client.get(f"{base(two_tenants)}/secrets", headers=header(owner))
+
+    assert listed.json()[0]["used_by"] == ["Conversation"]
+
+
+async def test_a_referenced_secret_cannot_be_deleted(client, session, two_tenants):
+    owner = await member(session, two_tenants["org_a"], "owner")
+    secret_id = (await make_secret(client, two_tenants, owner, "OpenAI production")).json()[
+        "secret_id"
+    ]
+    await client.put(
+        f"{base(two_tenants)}/provider-settings",
+        headers=header(owner),
+        json={"selection": {"llm_call": {"provider": "openai", "secret_id": secret_id}}},
+    )
+
+    refused = await client.delete(f"{base(two_tenants)}/secrets/{secret_id}", headers=header(owner))
+
+    assert refused.status_code == 409
+    assert "Conversation" in refused.text
+    assert (await session.scalars(account_secrets(two_tenants))).all() != []
+
+
+async def test_an_unreferenced_secret_can_be_deleted(client, session, two_tenants):
+    owner = await member(session, two_tenants["org_a"], "owner")
+    secret_id = (await make_secret(client, two_tenants, owner, "Unused")).json()["secret_id"]
+
+    removed = await client.delete(f"{base(two_tenants)}/secrets/{secret_id}", headers=header(owner))
+
+    assert removed.status_code == 204
+    assert (await session.scalars(account_secrets(two_tenants))).all() == []
+
+
+async def test_replacing_a_value_keeps_the_name_and_changes_last4(client, session, two_tenants):
+    owner = await member(session, two_tenants["org_a"], "owner")
+    secret_id = (await make_secret(client, two_tenants, owner, "Deepgram")).json()["secret_id"]
+
+    updated = await client.put(
+        f"{base(two_tenants)}/secrets/{secret_id}",
+        headers=header(owner),
+        json={"value": "rotated-8899"},
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "Deepgram"
+    assert updated.json()["last4"] == "8899"
+    row = await session.scalar(select(Secret).where(Secret.id == uuid.UUID(secret_id)))
+    assert row is not None
+    assert decrypt_secret(row.ciphertext) == "rotated-8899"
+
+
+async def test_a_job_override_is_stored_against_the_job(client, session, two_tenants):
+    owner = await member(session, two_tenants["org_a"], "owner")
+    secret_id = (await make_secret(client, two_tenants, owner, "ElevenLabs")).json()["secret_id"]
 
     written = await client.put(
-        path(two_tenants),
+        f"/tenants/{two_tenants['org_a']}/jobs/{two_tenants['job_a']}/provider-settings",
         headers=header(owner),
         json={
-            "selection": {"tts_provider": "elevenlabs", "tts_voice_id": "rachel"},
-            "credentials": [{"provider": "elevenlabs", "api_key": SECRET}],
+            "selection": {
+                "tts": {"provider": "elevenlabs", "secret_id": secret_id, "voice_id": "Adam"}
+            }
         },
     )
-    read = await client.get(path(two_tenants), headers=header(owner))
 
     assert written.status_code == 200
-    assert read.status_code == 200
-    body = read.json()
-    assert body["selection"]["tts_voice_id"] == "rachel"
-    assert body["credentials"][0]["key_last4"] == "wxyz"
-    assert SECRET not in written.text
-    assert SECRET not in read.text
-    assert "api_key" not in body["credentials"][0]
+    assert written.json()["selection"]["tts"]["voice_id"] == "Adam"
+    job = await session.get(Job, two_tenants["job_a"])
+    assert job is not None
+    assert job.provider_config["tts"]["voice_id"] == "Adam"
+    organization = await session.get(Organization, two_tenants["org_a"])
+    assert organization is not None
+    assert organization.provider_config in (None, {})
 
 
-async def test_the_stored_secret_is_encrypted_at_rest(client, session, two_tenants):
-    owner = await member(session, two_tenants["org_a"], "owner")
-
-    await client.put(
-        path(two_tenants),
-        headers=header(owner),
-        json={"credentials": [{"provider": "deepgram", "api_key": SECRET}]},
-    )
-
-    row = await session.scalar(
-        select(ProviderCredential).where(ProviderCredential.provider == "deepgram")
-    )
-    assert row is not None
-    assert SECRET not in row.secret_ciphertext
-    assert decrypt_secret(row.secret_ciphertext) == SECRET
-
-
-async def test_omitting_the_api_key_leaves_the_stored_secret_untouched(
-    client, session, two_tenants
-):
+async def test_a_job_read_reports_what_it_would_inherit(client, session, two_tenants):
     owner = await member(session, two_tenants["org_a"], "owner")
     await client.put(
-        path(two_tenants),
+        f"{tenant(two_tenants)}/provider-settings",
         headers=header(owner),
-        json={"credentials": [{"provider": "deepgram", "api_key": SECRET}]},
+        json={"selection": {"tts": {"provider": "elevenlabs", "voice_id": "Rachel"}}},
     )
 
-    await client.put(
-        path(two_tenants),
+    read = await client.get(
+        f"/tenants/{two_tenants['org_a']}/jobs/{two_tenants['job_a']}/provider-settings",
         headers=header(owner),
-        json={"credentials": [{"provider": "deepgram", "base_url": "https://gw.test"}]},
     )
 
-    row = await session.scalar(
-        select(ProviderCredential).where(ProviderCredential.provider == "deepgram")
-    )
-    assert row is not None
-    assert decrypt_secret(row.secret_ciphertext) == SECRET
-    assert row.base_url == "https://gw.test"
+    assert read.json()["inherited"]["tts"]["voice_id"] == "Rachel"
+    assert read.json()["selection"]["tts"]["voice_id"] is None
 
 
-async def test_an_empty_api_key_deletes_the_credential(client, session, two_tenants):
+async def test_an_organization_read_reports_what_it_would_inherit(client, session, two_tenants):
     owner = await member(session, two_tenants["org_a"], "owner")
     await client.put(
-        path(two_tenants),
+        f"{base(two_tenants)}/provider-settings",
         headers=header(owner),
-        json={"credentials": [{"provider": "deepgram", "api_key": SECRET}]},
+        json={"selection": {"tts": {"provider": "cartesia", "voice_id": "British Lady"}}},
     )
 
-    await client.put(
-        path(two_tenants),
+    read = await client.get(f"{tenant(two_tenants)}/provider-settings", headers=header(owner))
+
+    assert read.json()["inherited"]["tts"]["voice_id"] == "British Lady"
+    assert read.json()["selection"]["tts"]["voice_id"] is None
+
+
+async def test_a_secret_from_another_org_cannot_be_referenced(client, session, two_tenants):
+    owner = await member(session, two_tenants["org_a"], "owner")
+    outsider = Secret(
+        id=uuid.uuid4(),
+        account_id=two_tenants["other_account"],
+        name="Theirs",
+        ciphertext="x",
+        last4="zzzz",
+    )
+    session.add(outsider)
+    await session.flush()
+
+    response = await client.put(
+        f"{base(two_tenants)}/provider-settings",
         headers=header(owner),
-        json={"credentials": [{"provider": "deepgram", "api_key": ""}]},
+        json={"selection": {"stt": {"provider": "deepgram", "secret_id": str(outsider.id)}}},
     )
 
-    rows = (await session.scalars(select(ProviderCredential))).all()
-    assert rows == []
+    assert response.status_code == 404
 
 
 async def test_a_non_owner_is_refused(client, session, two_tenants):
     admin = await member(session, two_tenants["org_a"], "admin")
     recruiter = await member(session, two_tenants["org_a"], "recruiter")
 
-    assert (await client.get(path(two_tenants), headers=header(admin))).status_code == 403
-    assert (await client.get(path(two_tenants), headers=header(recruiter))).status_code == 404
-
-
-async def test_a_job_scoped_override_is_stored_separately(client, session, two_tenants):
-    owner = await member(session, two_tenants["org_a"], "owner")
-    await client.put(
-        path(two_tenants),
-        headers=header(owner),
-        json={"credentials": [{"provider": "deepgram", "api_key": "org-key-1111"}]},
-    )
-
-    job_path = path(two_tenants, f"/jobs/{two_tenants['job_a']}")
-    written = await client.put(
-        job_path,
-        headers=header(owner),
-        json={"credentials": [{"provider": "deepgram", "api_key": "job-key-2222"}]},
-    )
-
-    assert written.status_code == 200
-    assert written.json()["credentials"][0]["key_last4"] == "2222"
-    rows = (await session.scalars(select(ProviderCredential))).all()
-    assert len(rows) == 2
-
-
-async def test_a_job_from_another_org_is_not_found(client, session, two_tenants):
-    owner = await member(session, two_tenants["org_a"], "owner")
-
-    response = await client.get(
-        path(two_tenants, f"/jobs/{two_tenants['job_b']}"), headers=header(owner)
-    )
-
-    assert response.status_code == 404
-
-
-async def test_an_unsupported_provider_is_rejected(client, session, two_tenants):
-    owner = await member(session, two_tenants["org_a"], "owner")
-
-    response = await client.put(
-        path(two_tenants),
-        headers=header(owner),
-        json={"credentials": [{"provider": "acme-speech", "api_key": SECRET}]},
-    )
-
-    assert response.status_code == 422
-
-
-HOSTILE_URLS = [
-    "http://169.254.169.254/latest/meta-data/",
-    "https://169.254.169.254/",
-    "https://[::1]/v1",
-    "https://127.0.0.1/v1",
-    "https://localhost/v1",
-    "https://keycloak/v1",
-    "https://postgres.internal/v1",
-    "https://minio.local/v1",
-    "file:///etc/passwd",
-    "gopher://gw.example.com/",
-    "https://user:pass@gw.example.com/v1",
-    "https://gw/v1",
-    "https://0x7f.0.0.1/v1",
-    "https://0177.0.0.1/v1",
-    "https://2130706433/v1",
-]
+    assert (
+        await client.get(f"{base(two_tenants)}/secrets", headers=header(admin))
+    ).status_code == 403
+    assert (
+        await client.get(f"{base(two_tenants)}/secrets", headers=header(recruiter))
+    ).status_code == 404
 
 
 @pytest.mark.parametrize("url", HOSTILE_URLS)
-async def test_a_hostile_credential_base_url_is_rejected(client, session, two_tenants, url):
+async def test_a_hostile_base_url_is_rejected(client, session, two_tenants, url):
     owner = await member(session, two_tenants["org_a"], "owner")
 
     response = await client.put(
-        path(two_tenants),
+        f"{base(two_tenants)}/provider-settings",
         headers=header(owner),
-        json={"credentials": [{"provider": "openai", "api_key": SECRET, "base_url": url}]},
+        json={"selection": {"llm_call": {"provider": "openai", "base_url": url}}},
     )
 
     assert response.status_code == 422
-    assert "base_url" in response.text
-    assert (await session.scalars(select(ProviderCredential))).all() == []
-
-
-@pytest.mark.parametrize("url", HOSTILE_URLS)
-async def test_a_hostile_llm_base_url_is_rejected(client, session, two_tenants, url):
-    owner = await member(session, two_tenants["org_a"], "owner")
-
-    response = await client.put(
-        path(two_tenants),
-        headers=header(owner),
-        json={"selection": {"llm_base_url": url}},
-    )
-
-    assert response.status_code == 422
-    organization = await session.get(Organization, two_tenants["org_a"])
-    assert organization is not None
-    assert organization.provider_config in (None, {})
 
 
 async def test_a_normal_gateway_url_is_accepted(client, session, two_tenants):
     owner = await member(session, two_tenants["org_a"], "owner")
 
     response = await client.put(
-        path(two_tenants),
+        f"{base(two_tenants)}/provider-settings",
         headers=header(owner),
         json={
-            "selection": {"llm_base_url": "https://api.openai.com/v1"},
-            "credentials": [
-                {
-                    "provider": "openai",
-                    "api_key": SECRET,
-                    "base_url": "https://gateway.example.com:8443/v1",
-                }
-            ],
+            "selection": {
+                "llm_call": {"provider": "openai", "base_url": "https://openrouter.ai/api/v1"}
+            }
         },
     )
 
     assert response.status_code == 200
-    body = response.json()
-    assert body["selection"]["llm_base_url"] == "https://api.openai.com/v1"
-    assert body["credentials"][0]["base_url"] == "https://gateway.example.com:8443/v1"
 
 
-async def test_plain_http_is_accepted_only_when_dev_routes_are_enabled(
-    client, session, monkeypatch, two_tenants
-):
+async def test_the_catalogue_is_served(client, session, two_tenants):
     owner = await member(session, two_tenants["org_a"], "owner")
-    body = {"selection": {"llm_base_url": "http://gateway.example.com/v1"}}
 
-    refused = await client.put(path(two_tenants), headers=header(owner), json=body)
-
-    monkeypatch.setenv("DEV_ROUTES_ENABLED", "true")
-    get_settings.cache_clear()
-    allowed = await client.put(path(two_tenants), headers=header(owner), json=body)
-
-    assert refused.status_code == 422
-    assert allowed.status_code == 200
-
-
-async def test_a_stored_value_is_not_revalidated_on_read(client, session, two_tenants):
-    owner = await member(session, two_tenants["org_a"], "owner")
-    organization = await session.get(Organization, two_tenants["org_a"])
-    assert organization is not None
-    organization.provider_config = {"llm_base_url": "http://169.254.169.254/"}
-    session.add(
-        ProviderCredential(
-            org_id=two_tenants["org_a"],
-            job_id=None,
-            provider="openai",
-            base_url="http://keycloak:8080",
-            secret_ciphertext=encrypt_secret(SECRET),
-            secret_last4=last4(SECRET),
-        )
-    )
-    await session.flush()
-
-    response = await client.get(path(two_tenants), headers=header(owner))
+    response = await client.get("/provider-catalogue", headers=header(owner))
 
     assert response.status_code == 200
-    body = response.json()
-    assert body["selection"]["llm_base_url"] == "http://169.254.169.254/"
-    assert body["credentials"][0]["base_url"] == "http://keycloak:8080"
+    assert set(response.json()) == {"stt", "tts", "llm_call", "llm_summary"}
+    assert "nova-3" in response.json()["stt"]["deepgram"]["options"]
+
+
+async def test_an_account_with_no_organizations_is_still_administrable(client, session, two_tenants):
+    user = User(id=uuid.uuid4(), keycloak_sub=str(uuid.uuid4()), email=f"{uuid.uuid4()}@acme.test")
+    session.add(user)
+    await session.flush()
+
+    account = Account(id=uuid.uuid4(), name=f"Empty {uuid.uuid4()}")
+    session.add(account)
+    await session.flush()
+    session.add(AccountOwner(id=uuid.uuid4(), account_id=account.id, user_id=user.id))
+    await session.flush()
+
+    created = await client.post(
+        f"/accounts/{account.id}/secrets",
+        headers=header(user),
+        json={"name": "Deepgram", "value": SECRET},
+    )
+    listed = await client.get(f"/accounts/{account.id}/secrets", headers=header(user))
+
+    assert created.status_code == 201
+    assert listed.status_code == 200
+    assert listed.json()[0]["used_by"] == []
+
+
+async def test_an_owner_may_create_a_tenant_in_an_empty_account(client, session, two_tenants):
+    user = User(id=uuid.uuid4(), keycloak_sub=str(uuid.uuid4()), email=f"{uuid.uuid4()}@acme.test")
+    session.add(user)
+    await session.flush()
+
+    account = Account(id=uuid.uuid4(), name=f"Empty {uuid.uuid4()}")
+    session.add(account)
+    await session.flush()
+    session.add(AccountOwner(id=uuid.uuid4(), account_id=account.id, user_id=user.id))
+    await session.flush()
+
+    response = await client.post(
+        f"/accounts/{account.id}/tenants", headers=header(user), json={"name": "First Tenant"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "First Tenant"

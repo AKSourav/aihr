@@ -58,16 +58,19 @@ class Rubric(RootModel[list[RubricDimension]]):
         return self
 
 
+class SlotConfig(BaseModel):
+    provider: str | None = None
+    secret_id: UUID | None = None
+    model: str | None = None
+    voice_id: str | None = None
+    base_url: str | None = None
+
+
 class ProviderSelection(BaseModel):
-    stt_provider: str | None = None
-    stt_model: str | None = None
-    tts_provider: str | None = None
-    tts_model: str | None = None
-    tts_voice_id: str | None = None
-    llm_provider: str | None = None
-    llm_call_model: str | None = None
-    llm_summary_model: str | None = None
-    llm_base_url: str | None = None
+    stt: SlotConfig = SlotConfig()
+    tts: SlotConfig = SlotConfig()
+    llm_call: SlotConfig = SlotConfig()
+    llm_summary: SlotConfig = SlotConfig()
 
 
 class ResolvedProvider(BaseModel):

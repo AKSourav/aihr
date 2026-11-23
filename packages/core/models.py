@@ -4,11 +4,9 @@ from datetime import datetime
 from sqlalchemy import (
     JSON,
     Boolean,
-    CheckConstraint,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
-    Index,
     SmallInteger,
     String,
     Text,
@@ -16,7 +14,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.sql import func, text
+from sqlalchemy.sql import func
 
 from core.db import Base
 
@@ -34,6 +32,17 @@ class Account(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     name: Mapped[str] = mapped_column(String)
+    provider_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AccountOwner(Base):
+    __tablename__ = "account_owners"
+    __table_args__ = (UniqueConstraint("account_id", "user_id"),)
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("accounts.id"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -82,37 +91,15 @@ class Job(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class ProviderCredential(Base):
-    __tablename__ = "provider_credentials"
-    __table_args__ = (
-        ForeignKeyConstraint(["job_id", "org_id"], ["jobs.id", "jobs.org_id"]),
-        CheckConstraint(
-            "provider IN ('openai', 'deepgram', 'cartesia', 'elevenlabs')",
-            name="ck_provider_credentials_provider",
-        ),
-        Index(
-            "uq_provider_credentials_org",
-            "org_id",
-            "provider",
-            unique=True,
-            postgresql_where=text("job_id IS NULL"),
-        ),
-        Index(
-            "uq_provider_credentials_job",
-            "job_id",
-            "provider",
-            unique=True,
-            postgresql_where=text("job_id IS NOT NULL"),
-        ),
-    )
+class Secret(Base):
+    __tablename__ = "secrets"
+    __table_args__ = (UniqueConstraint("account_id", "name"),)
 
     id: Mapped[uuid.UUID] = uuid_pk()
-    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
-    job_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
-    provider: Mapped[str] = mapped_column(String)
-    base_url: Mapped[str | None] = mapped_column(String, nullable=True)
-    secret_ciphertext: Mapped[str] = mapped_column(Text)
-    secret_last4: Mapped[str] = mapped_column(String)
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("accounts.id"), index=True)
+    name: Mapped[str] = mapped_column(String)
+    ciphertext: Mapped[str] = mapped_column(Text)
+    last4: Mapped[str] = mapped_column(String)
     key_version: Mapped[int] = mapped_column(SmallInteger, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

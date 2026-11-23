@@ -180,12 +180,9 @@ async function enterApp() {
   $("shell").hidden = false;
   $("whoami").replaceChildren(h("strong", {}, state.me.email || "Signed in"), state.me.is_platform_admin ? "platform admin" : "");
 
-  const select = $("org-select");
-  select.replaceChildren(...state.me.memberships.map((m) => h("option", { value: m.org_id }, m.org_name)));
   const saved = state.me.memberships.find((m) => m.org_id === recall());
   state.org = saved || state.me.memberships[0] || null;
-  if (state.org) select.value = state.org.org_id;
-  select.disabled = state.me.memberships.length < 2;
+  fillOrgSelect();
 
   if (!location.hash || location.hash === "#") location.hash = "#/applications";
   else route();
@@ -215,6 +212,18 @@ function failure(err) {
   render(h("div", { class: "card" }, h("div", { class: "empty" }, text)));
 }
 
+function fillOrgSelect() {
+  const select = $("org-select");
+  select.replaceChildren(...state.me.memberships.map((m) => h("option", { value: m.org_id }, m.org_name)));
+  if (state.org) {
+    select.append(new Option("+ New tenant…", NEW_TENANT));
+    select.value = state.org.org_id;
+  }
+  select.disabled = false;
+}
+
+const NAV = new Set(["jobs", "applications", "providers", "secrets", "account"]);
+
 function setActiveNav(name) {
   for (const el of document.querySelectorAll("[data-nav]")) {
     el.classList.toggle("active", el.getAttribute("data-nav") === name);
@@ -227,10 +236,14 @@ async function route() {
   if (!state.org) return foundTenantView();
 
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
-  setActiveNav(parts[0] === "jobs" || parts[0] === "providers" ? parts[0] : "applications");
+  setActiveNav(NAV.has(parts[0]) ? parts[0] : "applications");
   try {
     if (parts[0] === "providers") {
-      providersView();
+      await providersView();
+    } else if (parts[0] === "account") {
+      await accountProvidersView();
+    } else if (parts[0] === "secrets") {
+      await secretsView();
     } else if (parts[0] === "jobs" && parts[1] === "new") {
       newJobView();
     } else if (parts[0] === "jobs" && parts[1]) {
@@ -516,12 +529,7 @@ async function jobView(jobId) {
           panel))
     : null;
 
-  const providerPanel = h("div", {});
-  const openProviders = () => {
-    if (providerPanel.firstChild) return providerPanel.replaceChildren();
-    providerPanel.replaceChildren(h("div", { style: "margin-top:16px" },
-      providerSettingsCard(state.org.account_id, state.org.org_id, job.job_id)));
-  };
+  const providerCard = await jobProviderCard(job);
 
   render(
     h("a", { class: "crumb", href: "#/jobs" }, "← Jobs"),
@@ -529,13 +537,7 @@ async function jobView(jobId) {
       h("div", {}, h("h1", {}, job.title), h("div", { class: "sub" }, `Created ${fmtDateTime(job.created_at)}`)),
       h("div", { class: "toolbar" }, h("button", { class: "btn", onclick: route }, "Refresh"))),
     candidates,
-    h("div", { class: "card" },
-      h("div", { class: "card-head" }, h("h2", {}, "Providers")),
-      h("div", { class: "card-body" },
-        h("div", { class: "actions" },
-          h("button", { class: "btn", onclick: openProviders }, "Provider settings")),
-        h("p", { class: "hint" }, "Keys and models for this role only. Blank fields inherit the organization's. Account owners only."),
-        providerPanel)),
+    providerCard,
     h("div", { class: "card" },
       h("div", { class: "card-head" }, h("h2", {}, "Rubric")),
       h("div", { class: "card-body" }, rubric.length
@@ -768,166 +770,349 @@ function importCandidatesForm(job) {
     results);
 }
 
-// ---------------------------------------------------------------- provider settings
+// ---------------------------------------------------------------- providers
 
-const PROVIDERS = ["openai", "deepgram", "cartesia", "elevenlabs"];
-const SELECTION_FIELDS = [
-  ["stt_provider", "Speech-to-text provider"],
-  ["stt_model", "Speech-to-text model"],
-  ["tts_provider", "Text-to-speech provider"],
-  ["tts_model", "Text-to-speech model"],
-  ["tts_voice_id", "Voice"],
-  ["llm_provider", "LLM provider"],
-  ["llm_call_model", "LLM model for calls"],
-  ["llm_summary_model", "LLM model for summaries"],
-  ["llm_base_url", "LLM base URL"],
+const SLOTS = [
+  ["stt", "Speech-to-text", "Transcribes the candidate."],
+  ["tts", "Text-to-speech", "The interviewer's voice."],
+  ["llm_call", "Conversation", "Runs the interview live. Favour a fast model."],
+  ["llm_summary", "Rubric scoring", "Writes the summary afterwards. Favour a stronger model."],
 ];
-const providerPath = (accountId, orgId, jobId) =>
-  `/accounts/${accountId}/tenants/${orgId}${jobId ? `/jobs/${jobId}` : ""}/provider-settings`;
+const CUSTOM = "__custom__";
+const INHERIT = "";
 
-// The PUT replaces the whole selection and walks the whole credential list, so every field is
-// read back out of the form on save. A typed key is read straight off the input into the request
-// body and never stored anywhere else.
-function providerSettingsForm(accountId, orgId, jobId, settings, inherited, reload) {
-  const blank = jobId ? "Inherit from the organization" : "Not set";
-  const selection = settings.selection || {};
-  const fields = {};
+let catalogue = null;
+async function loadCatalogue() {
+  if (!catalogue) catalogue = await api("GET", "/provider-catalogue");
+  return catalogue;
+}
 
-  const selectionRows = SELECTION_FIELDS.map(([key, label]) => {
-    const current = selection[key] || "";
-    let input;
-    if (key.endsWith("_provider")) {
-      const options = current && !PROVIDERS.includes(current) ? [...PROVIDERS, current] : PROVIDERS;
-      input = h("select", { class: "select" },
-        h("option", { value: "" }, blank),
-        options.map((p) => h("option", { value: p }, p)));
-    } else {
-      input = h("input", { class: "input", placeholder: blank });
-    }
-    input.value = current;
-    fields[key] = input;
-    return h("div", {},
-      h("label", { class: "field-label" }, label),
-      input,
-      inherited ? h("p", { class: "hint" }, `Organization: ${inherited[key] || "not set"}`) : null);
-  });
+const accountPath = (suffix) => `/accounts/${state.org.account_id}${suffix}`;
 
-  const stored = new Map((settings.credentials || []).map((c) => [c.provider, c]));
-  const rows = {};
-  const credentialRows = PROVIDERS.map((name) => {
-    const existing = stored.get(name);
-    const key = h("input", {
-      class: "input", type: "password", autocomplete: "off",
-      placeholder: existing ? "Leave blank to keep the stored key" : "Paste a key",
-    });
-    const baseUrl = h("input", { class: "input", placeholder: "Base URL (optional)" });
-    baseUrl.value = (existing && existing.base_url) || "";
-    const remove = h("input", { type: "checkbox", disabled: !existing });
-    rows[name] = { key, baseUrl, remove, existing: Boolean(existing) };
+function picker(options, { value, blank }) {
+  const sel = h("select", { class: "select" });
+  sel.append(new Option(blank, INHERIT));
+  for (const o of options) sel.append(new Option(o.label, o.value));
+  sel.append(new Option("Custom…", CUSTOM));
 
-    return h("div", { class: "rubric-item" },
-      h("div", { class: "label" },
-        h("span", {}, name),
-        h("span", { class: "muted" }, existing
-          ? `ends ${existing.key_last4} · updated ${fmtDateTime(existing.updated_at)}`
-          : "no key stored")),
-      h("div", { class: "actions", style: "margin-top:6px" },
-        h("div", { style: "flex:1 1 220px" }, key),
-        h("div", { style: "flex:1 1 220px" }, baseUrl),
-        h("label", { class: "hint", style: "margin:0;display:flex;align-items:center;gap:6px" },
-          remove, "Delete")));
-  });
+  const custom = h("input", { class: "input", style: "margin-top:7px", placeholder: "Type a value" });
+  custom.hidden = true;
 
-  function requestBody() {
-    const picked = {};
-    for (const [key] of SELECTION_FIELDS) picked[key] = fields[key].value.trim() || null;
-
-    const credentials = [];
-    for (const name of PROVIDERS) {
-      const row = rows[name];
-      const base_url = row.baseUrl.value.trim() || null;
-      if (row.remove.checked) credentials.push({ provider: name, api_key: "" });
-      else if (row.key.value) credentials.push({ provider: name, api_key: row.key.value, base_url });
-      else if (row.existing) credentials.push({ provider: name, base_url });
-    }
-    return { selection: picked, credentials };
+  const known = options.some((o) => o.value === value);
+  if (value && !known) {
+    sel.value = CUSTOM;
+    custom.hidden = false;
+    custom.value = value;
+  } else {
+    sel.value = value || INHERIT;
   }
 
-  const saveBtn = h("button", { class: "btn btn-primary", type: "submit" }, "Save providers");
+  sel.addEventListener("change", () => {
+    custom.hidden = sel.value !== CUSTOM;
+    if (!custom.hidden) custom.focus();
+  });
+
+  return {
+    node: h("div", {}, sel, custom),
+    sel,
+    read: () => (sel.value === CUSTOM ? custom.value.trim() || null : sel.value || null),
+    onChange: (fn) => { sel.addEventListener("change", fn); custom.addEventListener("input", fn); },
+  };
+}
+
+function slotEditor(slot, label, why, stored, secrets, inherited, blank) {
+  const entry = catalogue[slot] || {};
+  const providerNames = Object.keys(entry);
+  const badge = h("span", { class: "badge info" }, "Overridden");
+  badge.hidden = true;
+
+  const provider = picker(
+    providerNames.map((name) => ({ value: name, label: entry[name].label })),
+    { value: stored.provider || "", blank });
+
+  const secret = picker(
+    secrets.map((s) => ({ value: s.secret_id, label: `${s.name} · ••••${s.last4}` })),
+    { value: stored.secret_id || "", blank: blank === "Inherit" ? blank : "Platform default" });
+
+  const baseUrl = h("input", { class: "input", placeholder: "Base URL (optional)" });
+  baseUrl.value = stored.base_url || "";
+
+  const valueHost = h("div", {});
+  let value = null;
+
+  function fieldFor() {
+    const chosen = provider.read() || providerNames[0];
+    return entry[chosen] || { field: "model", options: [] };
+  }
+
+  function drawValue() {
+    const spec = fieldFor();
+    const current = spec.field === "voice_id" ? stored.voice_id : stored.model;
+    value = picker(spec.options.map((o) => ({ value: o, label: o })), { value: current || "", blank });
+    value.onChange(mark);
+    valueHost.replaceChildren(
+      h("label", { class: "field-label" }, spec.field === "voice_id" ? "Voice" : "Model"),
+      value.node);
+  }
+
+  function mark() {
+    const changed = Boolean(provider.read() || secret.read() || (value && value.read()) || baseUrl.value.trim());
+    badge.hidden = !(blank === "Inherit" && changed);
+    countOverrides();
+  }
+
+  provider.onChange(() => { drawValue(); mark(); });
+  baseUrl.addEventListener("input", mark);
+  drawValue();
+
+  const node = h("div", { class: "slot" },
+    h("div", {},
+      h("div", { class: "slot-name" }, label, " ", badge),
+      h("div", { class: "slot-why" }, why)),
+    h("div", {},
+      h("div", { class: "controls" },
+        h("div", {}, h("label", { class: "field-label" }, "Provider"), provider.node),
+        h("div", {}, h("label", { class: "field-label" }, "Secret"), secret.node),
+        valueHost,
+        h("div", {}, h("label", { class: "field-label" }, "Base URL"), baseUrl)),
+      inherited ? h("p", { class: "hint" }, inheritedLabel(slot, inherited)) : null));
+
+  return {
+    node,
+    read: () => {
+      const spec = fieldFor();
+      const picked = value ? value.read() : null;
+      return {
+        provider: provider.read(),
+        secret_id: secret.read(),
+        model: spec.field === "model" ? picked : null,
+        voice_id: spec.field === "voice_id" ? picked : null,
+        base_url: baseUrl.value.trim() || null,
+      };
+    },
+    overridden: () => Boolean(provider.read() || secret.read() || (value && value.read()) || baseUrl.value.trim()),
+  };
+}
+
+function inheritedLabel(slot, inherited) {
+  const from = inherited[slot] || {};
+  const parts = [from.provider, from.model || from.voice_id].filter(Boolean);
+  return parts.length ? `Inherited: ${parts.join(" · ")}` : "Inherited: platform default";
+}
+
+let editors = [];
+let overrideCounter = null;
+function countOverrides() {
+  if (!overrideCounter) return;
+  const n = editors.filter((e) => e.overridden()).length;
+  overrideCounter.textContent = n === 0 ? "Inheriting everything" : n === 1 ? "1 override" : `${n} overrides`;
+}
+
+function selectionFrom(list) {
+  const out = {};
+  SLOTS.forEach(([slot], i) => (out[slot] = list[i].read()));
+  return out;
+}
+
+function slotCard(title, note, settings, secrets, inherited, blank, onSave, extraFoot) {
+  editors = SLOTS.map(([slot, label, why]) =>
+    slotEditor(slot, label, why, (settings.selection || {})[slot] || {}, secrets, inherited, blank));
+
+  overrideCounter = inherited ? h("span", { class: "badge info" }, "Inheriting everything") : null;
   const error = h("p", { class: "error" });
   error.hidden = true;
+  const save = h("button", { class: "btn btn-primary" }, "Save");
 
-  async function save() {
+  save.addEventListener("click", async () => {
     error.hidden = true;
-    saveBtn.disabled = true;
-    saveBtn.textContent = "Saving…";
+    save.disabled = true;
+    save.textContent = "Saving…";
     try {
-      await api("PUT", providerPath(accountId, orgId, jobId), requestBody());
-      for (const name of PROVIDERS) rows[name].key.value = "";
+      await onSave({ selection: selectionFrom(editors) });
       toast("Provider settings saved.", "ok");
-      reload();
+      route();
     } catch (err) {
-      if (err.status === 401) return;
-      error.hidden = false;
-      error.textContent = err.message;
+      if (err.status !== 401) { error.hidden = false; error.textContent = err.message; }
     } finally {
-      saveBtn.disabled = false;
-      saveBtn.textContent = "Save providers";
+      save.disabled = false;
+      save.textContent = "Save";
     }
-  }
+  });
 
-  return h("form", { onsubmit: (e) => { e.preventDefault(); save(); } },
-    h("div", { class: "card" },
-      h("div", { class: "card-head" }, h("h2", {}, jobId ? "This role" : "Organization defaults"),
-        h("span", { class: "muted" }, jobId ? "blank inherits the organization" : "blank leaves the server default")),
-      h("div", { class: "card-body" }, h("div", { class: "grid" }, selectionRows))),
-    h("div", { class: "card" },
-      h("div", { class: "card-head" }, h("h2", {}, "Keys"),
-        h("span", { class: "muted" }, "stored encrypted, never shown again")),
-      h("div", { class: "card-body" }, credentialRows,
-        h("p", { class: "hint" }, "A blank key keeps whatever is already stored. Tick Delete to remove one."))),
-    h("div", { class: "actions", style: "margin-top:16px" }, saveBtn),
-    error);
+  countOverrides();
+  return h("div", { class: "card" },
+    h("div", { class: "card-head" }, h("h2", {}, title), overrideCounter),
+    note ? h("div", { class: "card-body" }, h("p", { class: "hint", style: "margin:0" }, note)) : null,
+    ...editors.map((e) => e.node),
+    h("div", { class: "foot" }, error, h("div", { class: "actions" }, extraFoot || null, save)));
 }
 
-function providerSettingsCard(accountId, orgId, jobId) {
-  const container = h("div", {});
-
-  if (!accountId) {
-    return h("div", { class: "card" }, h("div", { class: "empty" },
-      "This session started before provider settings existed. Sign out and back in to continue."));
+async function secretsView() {
+  loading();
+  await loadCatalogue();
+  let rows;
+  try {
+    rows = await api("GET", accountPath("/secrets"));
+  } catch (err) {
+    return ownerOnly(err);
   }
 
-  async function load() {
-    container.replaceChildren(h("div", { class: "spinner" }, "Loading…"));
+  const name = h("input", { class: "input", placeholder: "OpenAI — production" });
+  const value = h("input", { class: "input", type: "password", autocomplete: "off", placeholder: "Paste the key" });
+  const error = h("p", { class: "error" });
+  error.hidden = true;
+  const form = h("div", { class: "card" });
+  form.hidden = true;
+
+  const add = h("button", { class: "btn btn-primary" }, "New secret");
+  add.addEventListener("click", () => {
+    form.hidden = !form.hidden;
+    add.textContent = form.hidden ? "New secret" : "Cancel";
+    if (!form.hidden) name.focus();
+  });
+
+  const create = h("button", { class: "btn btn-primary" }, "Save secret");
+  create.addEventListener("click", async () => {
+    error.hidden = true;
     try {
-      const [settings, organization] = await Promise.all([
-        api("GET", providerPath(accountId, orgId, jobId)),
-        jobId ? api("GET", providerPath(accountId, orgId, null)) : null,
-      ]);
-      container.replaceChildren(providerSettingsForm(
-        accountId, orgId, jobId, settings, organization && organization.selection, load));
+      await api("POST", accountPath("/secrets"), { name: name.value.trim(), value: value.value });
+      value.value = "";
+      toast("Secret saved.", "ok");
+      route();
     } catch (err) {
-      if (err.status === 401) return;
-      const text = {
-        403: "Provider settings are owner-only. Ask the account owner to register keys and pick models.",
-        404: "You don't administer this organization's account.",
-      }[err.status] || err.message;
-      container.replaceChildren(h("div", { class: "card" }, h("div", { class: "empty" }, text)));
+      if (err.status !== 401) { error.hidden = false; error.textContent = err.message; }
     }
-  }
+  });
 
-  load();
-  return container;
+  form.replaceChildren(
+    h("div", { class: "card-head" }, h("h2", {}, "New secret")),
+    h("div", { class: "card-body" },
+      h("div", { class: "controls" },
+        h("div", {}, h("label", { class: "field-label" }, "Name"), name),
+        h("div", {}, h("label", { class: "field-label" }, "Value"), value)),
+      h("div", { class: "actions", style: "margin-top:12px" }, create),
+      error));
+
+  const body = h("tbody");
+  const draw = () => body.replaceChildren(...(rows.length ? rows.map(secretRow) : [
+    h("tr", {}, h("td", { colspan: "5" }, h("div", { class: "empty" }, "No secrets yet.")))]));
+
+  function secretRow(row) {
+    const remove = h("button", { class: "btn btn-sm btn-ghost" }, "Delete");
+    remove.addEventListener("click", async () => {
+      remove.disabled = true;
+      try {
+        await api("DELETE", accountPath(`/secrets/${row.secret_id}`));
+        toast("Secret deleted.", "ok");
+        route();
+      } catch (err) {
+        remove.disabled = false;
+        if (err.status !== 401) toast(err.message, "bad");
+      }
+    });
+    return h("tr", {},
+      h("td", {}, h("div", { class: "name" }, row.name)),
+      h("td", { class: "num" }, `••••${row.last4}`),
+      h("td", {}, row.used_by.length
+        ? row.used_by.map((u) => h("span", { class: "badge ok", style: "margin-right:4px" }, u))
+        : h("span", { class: "badge warn" }, "Not used yet")),
+      h("td", {}, fmtDate(row.created_at)),
+      h("td", { style: "text-align:right" }, remove));
+  }
+  draw();
+
+  render(
+    h("div", { class: "page-head" },
+      h("div", {}, h("h1", {}, "Secrets"),
+        h("div", { class: "sub" }, "Keys you store once and point providers at.")),
+      h("div", { class: "toolbar" }, add)),
+    form,
+    h("div", { class: "card" },
+      h("table", { class: "table" },
+        h("thead", {}, h("tr", {}, ["Name", "Value", "Used by", "Added", ""].map((t) => h("th", {}, t)))),
+        body)),
+    h("p", { class: "hint" }, "A stored value is never shown again — only replaced or deleted."));
 }
 
-function providersView() {
+function ownerOnly(err) {
+  if (err.status === 401) return;
+  const text = err.status === 403 || err.status === 404
+    ? "Provider settings are owner-only. Ask the account owner to register keys and pick models."
+    : err.message;
+  render(h("div", { class: "card" }, h("div", { class: "empty" }, text)));
+}
+
+async function providersView() {
+  loading();
+  await loadCatalogue();
+  let settings, secrets;
+  try {
+    [settings, secrets] = await Promise.all([
+      api("GET", accountPath(`/tenants/${state.org.org_id}/provider-settings`)),
+      api("GET", accountPath("/secrets")),
+    ]);
+  } catch (err) {
+    return ownerOnly(err);
+  }
+
   render(
     h("div", { class: "page-head" },
       h("div", {}, h("h1", {}, "Providers"),
-        h("div", { class: "sub" }, `Speech and model vendors for ${state.org.org_name}`)),
-      h("div", { class: "toolbar" }, h("button", { class: "btn", onclick: route }, "Refresh"))),
-    providerSettingsCard(state.org.account_id, state.org.org_id, null));
+        h("div", { class: "sub" }, `What ${state.org.org_name} screens with.`))),
+    slotCard(
+      "Organization defaults",
+      "Every job here inherits these. A blank field follows the account.",
+      settings, secrets, settings.inherited || {}, "Inherit",
+      (body) => api("PUT", accountPath(`/tenants/${state.org.org_id}/provider-settings`), body)),
+    h("p", { class: "hint" }, "A single job can override any of these from its own posting."));
+}
+
+async function accountProvidersView() {
+  loading();
+  await loadCatalogue();
+  let settings, secrets;
+  try {
+    [settings, secrets] = await Promise.all([
+      api("GET", accountPath("/provider-settings")),
+      api("GET", accountPath("/secrets")),
+    ]);
+  } catch (err) {
+    return ownerOnly(err);
+  }
+
+  render(
+    h("div", { class: "page-head" },
+      h("div", {}, h("h1", {}, "Provider defaults"),
+        h("div", { class: "sub" }, "What every organization in the account starts from."))),
+    slotCard(
+      "Account defaults",
+      "An organization or a job overrides these field by field.",
+      settings, secrets, null, "Platform default",
+      (body) => api("PUT", accountPath("/provider-settings"), body)));
+}
+
+async function jobProviderCard(job) {
+  await loadCatalogue();
+  const host = h("div", {});
+  try {
+    const data = await api("GET", tenantPath(`/jobs/${job.job_id}/provider-settings`));
+    host.replaceChildren(slotCard(
+      "Voice and models",
+      "Blank fields follow this tenant, then the account.",
+      data,
+      data.secrets,
+      data.inherited,
+      "Inherit",
+      (body) => api("PUT", tenantPath(`/jobs/${job.job_id}/provider-settings`), body)));
+  } catch (err) {
+    if (err.status === 403) {
+      host.replaceChildren(h("div", { class: "card" }, h("div", { class: "empty" },
+        "You don't have permission to change this role's providers.")));
+    } else if (err.status !== 401) {
+      host.replaceChildren(h("div", { class: "card" }, h("div", { class: "empty" }, err.message)));
+    }
+  }
+  return host;
 }
 
 // ---------------------------------------------------------------- applications list
@@ -1176,7 +1361,31 @@ $("logout-btn").addEventListener("click", async () => {
   state.org = null;
   showLogin();
 });
-$("org-select").addEventListener("change", (e) => {
+const NEW_TENANT = "__new_tenant__";
+
+async function createTenant() {
+  const name = prompt("Name the new tenant");
+  if (!name || !name.trim()) return false;
+  try {
+    const created = await api("POST", `/accounts/${state.org.account_id}/tenants`, { name: name.trim() });
+    state.me = await api("GET", "/me");
+    state.org = state.me.memberships.find((m) => m.org_id === created.org_id) || state.org;
+    remember(state.org.org_id);
+    fillOrgSelect();
+    toast(`${created.name} is ready.`, "ok");
+    return true;
+  } catch (err) {
+    if (err.status !== 401) toast(err.message, "bad");
+    return false;
+  }
+}
+
+$("org-select").addEventListener("change", async (e) => {
+  if (e.target.value === NEW_TENANT) {
+    if (!(await createTenant())) fillOrgSelect();
+    location.hash = "#/applications";
+    return route();
+  }
   state.org = state.me.memberships.find((m) => m.org_id === e.target.value) || null;
   if (state.org) remember(state.org.org_id);
   if (location.hash === "#/applications") route();

@@ -1,58 +1,65 @@
 from datetime import datetime
-from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db import get_session
-from core.models import AuditEvent, Job, Organization, ProviderCredential
+from core.models import Account, AuditEvent, Job, Organization, Secret
 from core.outbound_url import validate_base_url
+from core.providers import SLOTS, catalogue, merge_selection
 from core.schemas import ProviderSelection
 from core.secrets import encrypt_secret, last4
 from services.api.account_authz import AccountContext, owner_only
 
 router = APIRouter(prefix="/accounts/{account_id}", tags=["providers"])
+catalogue_router = APIRouter(tags=["providers"])
 
-ProviderName = Literal["openai", "deepgram", "cartesia", "elevenlabs"]
-
-
-class CredentialIn(BaseModel):
-    provider: ProviderName
-    api_key: str | None = None
-    base_url: str | None = None
-
-    @field_validator("base_url")
-    @classmethod
-    def _check_base_url(cls, value: str | None) -> str | None:
-        return validate_base_url(value)
+SLOT_LABELS = {
+    "stt": "Speech-to-text",
+    "tts": "Text-to-speech",
+    "llm_call": "Conversation",
+    "llm_summary": "Rubric scoring",
+}
 
 
-class CredentialOut(BaseModel):
-    provider: str
-    base_url: str | None
-    key_last4: str
+class SecretRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    value: str = Field(min_length=1, max_length=4096)
+
+
+class SecretUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    value: str | None = Field(default=None, min_length=1, max_length=4096)
+
+
+class SecretOut(BaseModel):
+    secret_id: UUID
+    name: str
+    last4: str
+    used_by: list[str]
+    created_at: datetime
     updated_at: datetime
 
 
 class ProviderSettingsRequest(BaseModel):
     selection: ProviderSelection = ProviderSelection()
-    credentials: list[CredentialIn] = []
 
     @field_validator("selection")
     @classmethod
-    def _check_llm_base_url(cls, value: ProviderSelection) -> ProviderSelection:
-        validate_base_url(value.llm_base_url)
+    def _check_base_urls(cls, value: ProviderSelection) -> ProviderSelection:
+        for slot in SLOTS:
+            validate_base_url(getattr(value, slot).base_url)
         return value
 
 
 class ProviderSettingsOut(BaseModel):
-    org_id: UUID
+    org_id: UUID | None
     job_id: UUID | None
     selection: ProviderSelection
-    credentials: list[CredentialOut]
+    inherited: ProviderSelection | None = None
 
 
 async def _organization(session: AsyncSession, context: AccountContext, org_id: UUID) -> Organization:
@@ -66,95 +73,200 @@ async def _organization(session: AsyncSession, context: AccountContext, org_id: 
     return organization
 
 
-async def _job(session: AsyncSession, org_id: UUID, job_id: UUID) -> Job:
-    job = await session.scalar(select(Job).where(Job.id == job_id, Job.org_id == org_id))
-    if job is None:
-        raise HTTPException(status_code=404, detail="not found")
-    return job
-
-
-async def _settings_out(
-    session: AsyncSession, org_id: UUID, job_id: UUID | None, config: dict | None
-) -> ProviderSettingsOut:
-    rows = (
-        await session.scalars(
-            select(ProviderCredential)
-            .where(
-                ProviderCredential.org_id == org_id,
-                ProviderCredential.job_id.is_(None)
-                if job_id is None
-                else ProviderCredential.job_id == job_id,
-            )
-            .order_by(ProviderCredential.provider)
-        )
+async def account_references(session: AsyncSession, account_id: UUID) -> dict[UUID, list[str]]:
+    account = await session.get(Account, account_id)
+    organizations = (
+        await session.scalars(select(Organization).where(Organization.account_id == account_id))
     ).all()
+    org_ids = [organization.id for organization in organizations]
+    jobs = (
+        (await session.scalars(select(Job).where(Job.org_id.in_(org_ids)))).all() if org_ids else []
+    )
 
-    return ProviderSettingsOut(
-        org_id=org_id,
-        job_id=job_id,
-        selection=ProviderSelection.model_validate(config or {}),
-        credentials=[
-            CredentialOut(
-                provider=row.provider,
-                base_url=row.base_url,
-                key_last4=row.secret_last4,
-                updated_at=row.updated_at,
+    sources: list[tuple[dict | None, str | None]] = [
+        (account.provider_config if account else None, None)
+    ]
+    sources += [(organization.provider_config, organization.name) for organization in organizations]
+    sources += [(job.provider_config, job.title) for job in jobs]
+
+    used: dict[UUID, list[str]] = {}
+    for config, where in sources:
+        selection = ProviderSelection.model_validate(config or {})
+        for slot in SLOTS:
+            secret_id = getattr(selection, slot).secret_id
+            if secret_id is None:
+                continue
+            label = SLOT_LABELS[slot] if where is None else f"{SLOT_LABELS[slot]} · {where}"
+            used.setdefault(secret_id, []).append(label)
+    return used
+
+
+async def check_secrets(session: AsyncSession, account_id: UUID, selection: ProviderSelection) -> None:
+    wanted = {getattr(selection, slot).secret_id for slot in SLOTS} - {None}
+    if not wanted:
+        return
+    found = set(
+        (
+            await session.scalars(
+                select(Secret.id).where(Secret.account_id == account_id, Secret.id.in_(wanted))
             )
-            for row in rows
-        ],
+        ).all()
+    )
+    if wanted - found:
+        raise HTTPException(status_code=404, detail="secret not found")
+
+
+def _secret_out(secret: Secret, used: list[str]) -> SecretOut:
+    return SecretOut(
+        secret_id=secret.id,
+        name=secret.name,
+        last4=secret.last4,
+        used_by=used,
+        created_at=secret.created_at,
+        updated_at=secret.updated_at,
     )
 
 
-async def _apply(
-    session: AsyncSession,
-    org_id: UUID,
-    job_id: UUID | None,
-    body: ProviderSettingsRequest,
-) -> None:
-    for entry in body.credentials:
-        existing = await session.scalar(
-            select(ProviderCredential).where(
-                ProviderCredential.org_id == org_id,
-                ProviderCredential.job_id.is_(None)
-                if job_id is None
-                else ProviderCredential.job_id == job_id,
-                ProviderCredential.provider == entry.provider,
-            )
+@router.get("/secrets", response_model=list[SecretOut])
+async def list_secrets(
+    context: AccountContext = Depends(owner_only),
+    session: AsyncSession = Depends(get_session),
+) -> list[SecretOut]:
+    used = await account_references(session, context.account_id)
+    rows = (
+        await session.scalars(
+            select(Secret).where(Secret.account_id == context.account_id).order_by(Secret.name)
         )
+    ).all()
+    return [_secret_out(row, used.get(row.id, [])) for row in rows]
 
-        if entry.api_key is None and existing is None:
-            continue
 
-        if entry.api_key == "":
-            if existing is not None:
-                await session.delete(existing)
-            continue
+@router.post("/secrets", response_model=SecretOut, status_code=201)
+async def create_secret(
+    body: SecretRequest,
+    context: AccountContext = Depends(owner_only),
+    session: AsyncSession = Depends(get_session),
+) -> SecretOut:
+    clash = await session.scalar(
+        select(Secret).where(Secret.account_id == context.account_id, Secret.name == body.name)
+    )
+    if clash is not None:
+        raise HTTPException(status_code=409, detail="a secret with that name already exists")
 
-        if existing is None:
-            session.add(
-                ProviderCredential(
-                    org_id=org_id,
-                    job_id=job_id,
-                    provider=entry.provider,
-                    base_url=entry.base_url,
-                    secret_ciphertext=encrypt_secret(entry.api_key or ""),
-                    secret_last4=last4(entry.api_key or ""),
-                )
-            )
-        else:
-            existing.base_url = entry.base_url
-            if entry.api_key:
-                existing.secret_ciphertext = encrypt_secret(entry.api_key)
-                existing.secret_last4 = last4(entry.api_key)
-
+    secret = Secret(
+        account_id=context.account_id,
+        name=body.name,
+        ciphertext=encrypt_secret(body.value),
+        last4=last4(body.value),
+    )
+    session.add(secret)
     session.add(
         AuditEvent(
-            org_id=org_id,
-            entity_type="job" if job_id else "organization",
-            entity_id=job_id or org_id,
-            event_type="provider_settings_updated",
-            payload={"providers": sorted(e.provider for e in body.credentials)},
+            org_id=None,
+            entity_type="account",
+            entity_id=context.account_id,
+            event_type="secret_created",
+            payload={"name": body.name, "last4": last4(body.value)},
         )
+    )
+    await session.commit()
+    await session.refresh(secret)
+
+    return _secret_out(secret, [])
+
+
+@router.put("/secrets/{secret_id}", response_model=SecretOut)
+async def update_secret(
+    secret_id: UUID,
+    body: SecretUpdate,
+    context: AccountContext = Depends(owner_only),
+    session: AsyncSession = Depends(get_session),
+) -> SecretOut:
+    secret = await session.scalar(
+        select(Secret).where(Secret.id == secret_id, Secret.account_id == context.account_id)
+    )
+    if secret is None:
+        raise HTTPException(status_code=404, detail="not found")
+
+    if body.name is not None and body.name != secret.name:
+        clash = await session.scalar(
+            select(Secret).where(Secret.account_id == context.account_id, Secret.name == body.name)
+        )
+        if clash is not None:
+            raise HTTPException(status_code=409, detail="a secret with that name already exists")
+        secret.name = body.name
+
+    if body.value is not None:
+        secret.ciphertext = encrypt_secret(body.value)
+        secret.last4 = last4(body.value)
+
+    await session.commit()
+    await session.refresh(secret)
+    used = await account_references(session, context.account_id)
+
+    return _secret_out(secret, used.get(secret.id, []))
+
+
+@router.delete("/secrets/{secret_id}", status_code=204)
+async def delete_secret(
+    secret_id: UUID,
+    context: AccountContext = Depends(owner_only),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    secret = await session.scalar(
+        select(Secret).where(Secret.id == secret_id, Secret.account_id == context.account_id)
+    )
+    if secret is None:
+        raise HTTPException(status_code=404, detail="not found")
+
+    used = (await account_references(session, context.account_id)).get(secret_id, [])
+    if used:
+        raise HTTPException(status_code=409, detail=f"still used by {', '.join(used)}")
+
+    await session.delete(secret)
+    await session.commit()
+
+
+@router.get("/provider-settings", response_model=ProviderSettingsOut)
+async def read_account_providers(
+    context: AccountContext = Depends(owner_only),
+    session: AsyncSession = Depends(get_session),
+) -> ProviderSettingsOut:
+    account = await session.get(Account, context.account_id)
+    return ProviderSettingsOut(
+        org_id=None,
+        job_id=None,
+        selection=ProviderSelection.model_validate((account.provider_config if account else None) or {}),
+    )
+
+
+@router.put("/provider-settings", response_model=ProviderSettingsOut)
+async def write_account_providers(
+    body: ProviderSettingsRequest,
+    context: AccountContext = Depends(owner_only),
+    session: AsyncSession = Depends(get_session),
+) -> ProviderSettingsOut:
+    account = await session.get(Account, context.account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="not found")
+    await check_secrets(session, context.account_id, body.selection)
+
+    account.provider_config = body.selection.model_dump(mode="json", exclude_none=True)
+    session.add(
+        AuditEvent(
+            org_id=None,
+            entity_type="account",
+            entity_id=context.account_id,
+            event_type="provider_settings_updated",
+            payload={"scope": "account"},
+        )
+    )
+    await session.commit()
+
+    return ProviderSettingsOut(
+        org_id=None,
+        job_id=None,
+        selection=ProviderSelection.model_validate(account.provider_config or {}),
     )
 
 
@@ -165,7 +277,15 @@ async def read_org_providers(
     session: AsyncSession = Depends(get_session),
 ) -> ProviderSettingsOut:
     organization = await _organization(session, context, org_id)
-    return await _settings_out(session, org_id, None, organization.provider_config)
+    account = await session.get(Account, context.account_id)
+    return ProviderSettingsOut(
+        org_id=org_id,
+        job_id=None,
+        selection=ProviderSelection.model_validate(organization.provider_config or {}),
+        inherited=ProviderSelection.model_validate(
+            (account.provider_config if account else None) or {}
+        ),
+    )
 
 
 @router.put("/tenants/{org_id}/provider-settings", response_model=ProviderSettingsOut)
@@ -176,37 +296,27 @@ async def write_org_providers(
     session: AsyncSession = Depends(get_session),
 ) -> ProviderSettingsOut:
     organization = await _organization(session, context, org_id)
+    await check_secrets(session, context.account_id, body.selection)
+
     organization.provider_config = body.selection.model_dump(mode="json", exclude_none=True)
-    await _apply(session, org_id, None, body)
+    session.add(
+        AuditEvent(
+            org_id=org_id,
+            entity_type="organization",
+            entity_id=org_id,
+            event_type="provider_settings_updated",
+            payload={"scope": "organization"},
+        )
+    )
     await session.commit()
 
-    return await _settings_out(session, org_id, None, organization.provider_config)
+    return ProviderSettingsOut(
+        org_id=org_id,
+        job_id=None,
+        selection=ProviderSelection.model_validate(organization.provider_config or {}),
+    )
 
 
-@router.get("/tenants/{org_id}/jobs/{job_id}/provider-settings", response_model=ProviderSettingsOut)
-async def read_job_providers(
-    org_id: UUID,
-    job_id: UUID,
-    context: AccountContext = Depends(owner_only),
-    session: AsyncSession = Depends(get_session),
-) -> ProviderSettingsOut:
-    await _organization(session, context, org_id)
-    job = await _job(session, org_id, job_id)
-    return await _settings_out(session, org_id, job_id, job.provider_config)
-
-
-@router.put("/tenants/{org_id}/jobs/{job_id}/provider-settings", response_model=ProviderSettingsOut)
-async def write_job_providers(
-    org_id: UUID,
-    job_id: UUID,
-    body: ProviderSettingsRequest,
-    context: AccountContext = Depends(owner_only),
-    session: AsyncSession = Depends(get_session),
-) -> ProviderSettingsOut:
-    await _organization(session, context, org_id)
-    job = await _job(session, org_id, job_id)
-    job.provider_config = body.selection.model_dump(mode="json", exclude_none=True)
-    await _apply(session, org_id, job_id, body)
-    await session.commit()
-
-    return await _settings_out(session, org_id, job_id, job.provider_config)
+@catalogue_router.get("/provider-catalogue")
+async def read_catalogue() -> dict:
+    return catalogue()
