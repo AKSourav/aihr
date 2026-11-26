@@ -10,7 +10,7 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from core.db import get_session
 from core.invites import issue_invite_token
-from core.models import Application, AuditEvent, Call, Candidate, Membership, User
+from core.models import Application, AuditEvent, Call, Candidate, Membership, Resume, User
 from core.settings import get_settings
 from services.api import auth
 from services.api.routes import public_invites, screenings
@@ -105,6 +105,20 @@ async def application(session: AsyncSession, two_tenants) -> Application:
         stage="shortlisted",
     )
     session.add(application)
+    session.add(
+        Resume(
+            id=uuid.uuid4(),
+            org_id=two_tenants["org_a"],
+            candidate_id=two_tenants["candidate_a"],
+            job_id=two_tenants["job_a"],
+            pdf_url="s3://test-bucket/resume.pdf",
+            filename="resume.pdf",
+            byte_size=64,
+            status="ready",
+            text="resume text",
+            data={"skills": ["Python"]},
+        )
+    )
     await session.flush()
     return application
 
@@ -354,6 +368,51 @@ async def test_recruiter_starts_an_email_screening(client, session, two_tenants,
         )
     )
     assert audit is not None
+
+
+async def test_a_candidate_without_a_resume_cannot_be_screened(
+    client, session, two_tenants, temporal
+):
+    bare = Application(
+        id=uuid.uuid4(),
+        org_id=two_tenants["org_a"],
+        candidate_id=two_tenants["candidate_a"],
+        job_id=two_tenants["job_a"],
+        stage="shortlisted",
+    )
+    session.add(bare)
+    await session.flush()
+    sub = await make_member(session, two_tenants["org_a"], "recruiter")
+
+    response = await client.post(
+        f"/tenants/{two_tenants['org_a']}/applications/{bare.id}/screenings",
+        json={"channel": "email"},
+        headers=auth_header(sub),
+    )
+
+    assert response.status_code == 409
+    assert "resume" in response.json()["detail"]
+    assert [c for c in temporal.calls if c[0] == "start"] == []
+
+
+async def test_a_candidate_whose_resume_is_still_extracting_cannot_be_screened(
+    client, session, two_tenants, application, temporal
+):
+    resume = await session.scalar(
+        select(Resume).where(Resume.candidate_id == two_tenants["candidate_a"])
+    )
+    assert resume is not None
+    resume.status = "extracting"
+    await session.flush()
+    sub = await make_member(session, two_tenants["org_a"], "recruiter")
+
+    response = await client.post(
+        f"/tenants/{two_tenants['org_a']}/applications/{application.id}/screenings",
+        json={"channel": "email"},
+        headers=auth_header(sub),
+    )
+
+    assert response.status_code == 409
 
 
 async def test_a_running_screening_is_a_conflict(client, session, two_tenants, application, temporal):

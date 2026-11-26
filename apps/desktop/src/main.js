@@ -1,4 +1,5 @@
 const path = require("node:path");
+const fs = require("node:fs/promises");
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { KeycloakAuth } = require("./auth");
 
@@ -55,6 +56,81 @@ async function signupRequest(_event, body) {
   return send("POST", "/signup", body);
 }
 
+function validPath(apiPath) {
+  return typeof apiPath === "string" && apiPath.startsWith("/") && !apiPath.startsWith("//");
+}
+
+// Files cross IPC as Uint8Arrays, so the renderer never learns a path and still never sees a token.
+async function apiUpload(_event, { path: apiPath, fields = {}, field = "files", files = [] } = {}) {
+  if (!validPath(apiPath)) return { ok: false, status: 400, data: { detail: "invalid request" } };
+
+  const token = await auth.accessToken();
+  if (!token) return { ok: false, status: 401, data: { detail: "signed out" } };
+
+  const form = new FormData();
+  for (const [key, value] of Object.entries(fields)) {
+    if (value !== null && value !== undefined) form.append(key, String(value));
+  }
+  for (const file of files) {
+    form.append(field, new Blob([file.bytes], { type: "application/pdf" }), file.name);
+  }
+
+  try {
+    const response = await fetch(config.apiUrl + apiPath, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    });
+    const text = await response.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = { detail: text };
+    }
+    return { ok: response.ok, status: response.status, data };
+  } catch (err) {
+    return { ok: false, status: 0, data: { detail: `Cannot reach the API (${err.message})` } };
+  }
+}
+
+// The window's CSP sets no object-src/frame-src, so an embedded PDF would be blocked. Hand it
+// to the OS viewer instead, from a 0600 temp file that is removed on quit.
+const tempFiles = new Set();
+
+async function apiOpenFile(_event, { path: apiPath, name = "resume.pdf" } = {}) {
+  if (!validPath(apiPath)) return { ok: false, status: 400, data: { detail: "invalid request" } };
+
+  const token = await auth.accessToken();
+  if (!token) return { ok: false, status: 401, data: { detail: "signed out" } };
+
+  try {
+    const response = await fetch(config.apiUrl + apiPath, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      let data = { detail: text };
+      try {
+        data = text ? JSON.parse(text) : data;
+      } catch {}
+      return { ok: false, status: response.status, data };
+    }
+
+    const bytes = Buffer.from(await response.arrayBuffer());
+    const safe = String(name).replace(/[^a-zA-Z0-9._-]/g, "_").slice(-100) || "resume.pdf";
+    const file = path.join(app.getPath("temp"), `aihr-${Date.now()}-${safe}`);
+    await fs.writeFile(file, bytes, { mode: 0o600 });
+    tempFiles.add(file);
+
+    const error = await shell.openPath(file);
+    if (error) return { ok: false, status: 0, data: { detail: error } };
+    return { ok: true, status: 200, data: null };
+  } catch (err) {
+    return { ok: false, status: 0, data: { detail: `Could not open the file (${err.message})` } };
+  }
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -97,12 +173,19 @@ ipcMain.handle("auth:logout", async () => {
 });
 ipcMain.handle("api:request", apiRequest);
 ipcMain.handle("api:signup", signupRequest);
+ipcMain.handle("api:upload", apiUpload);
+ipcMain.handle("api:open-file", apiOpenFile);
 
 app.whenReady().then(() => {
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+app.on("will-quit", async () => {
+  await Promise.all([...tempFiles].map((file) => fs.unlink(file).catch(() => {})));
+  tempFiles.clear();
 });
 
 app.on("window-all-closed", () => {

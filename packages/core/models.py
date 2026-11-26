@@ -88,6 +88,7 @@ class Job(Base):
     rubric: Mapped[list] = mapped_column(JSON)
     question_plan: Mapped[dict] = mapped_column(JSON)
     provider_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    shortlist_rules: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -120,6 +121,7 @@ class Candidate(Base):
     last_name: Mapped[str] = mapped_column(String)
     email: Mapped[str] = mapped_column(String)
     phone_e164: Mapped[str | None] = mapped_column(String, nullable=True)
+    links: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     consent_ai_call_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     consent_recording_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -131,6 +133,32 @@ class CandidateProfile(Base):
     id: Mapped[uuid.UUID] = uuid_pk()
     candidate_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("candidates.id"), unique=True)
     data: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Resume(Base):
+    __tablename__ = "resumes"
+    __table_args__ = (
+        UniqueConstraint("id", "org_id"),
+        ForeignKeyConstraint(["candidate_id", "org_id"], ["candidates.id", "candidates.org_id"]),
+        ForeignKeyConstraint(["job_id", "org_id"], ["jobs.id", "jobs.org_id"]),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    candidate_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True, index=True
+    )
+    job_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    pdf_url: Mapped[str] = mapped_column(String)
+    filename: Mapped[str] = mapped_column(String)
+    byte_size: Mapped[int] = mapped_column()
+    status: Mapped[str] = mapped_column(String)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    model_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -218,15 +246,78 @@ class CallSummary(Base):
 
 class LlmUsage(Base):
     __tablename__ = "llm_usage"
-    __table_args__ = (ForeignKeyConstraint(["call_id", "org_id"], ["calls.id", "calls.org_id"]),)
+    __table_args__ = (
+        ForeignKeyConstraint(["call_id", "org_id"], ["calls.id", "calls.org_id"]),
+        ForeignKeyConstraint(
+            ["application_id", "org_id"], ["applications.id", "applications.org_id"]
+        ),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
-    call_id: Mapped[uuid.UUID] = uuid_col()
+    call_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    application_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     model: Mapped[str] = mapped_column(String)
     prompt_tokens: Mapped[int] = mapped_column(default=0)
     completion_tokens: Mapped[int] = mapped_column(default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AssistantConversation(Base):
+    __tablename__ = "assistant_conversations"
+    __table_args__ = (UniqueConstraint("id", "org_id"),)
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    title: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AssistantMessage(Base):
+    __tablename__ = "assistant_messages"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["conversation_id", "org_id"],
+            ["assistant_conversations.id", "assistant_conversations.org_id"],
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    conversation_id: Mapped[uuid.UUID] = uuid_col()
+    role: Mapped[str] = mapped_column(String)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tool_calls: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    tool_call_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+    prompt_tokens: Mapped[int] = mapped_column(default=0)
+    completion_tokens: Mapped[int] = mapped_column(default=0)
+    fairness_flags: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AssistantPendingAction(Base):
+    __tablename__ = "assistant_pending_actions"
+    __table_args__ = (
+        UniqueConstraint("id", "org_id"),
+        ForeignKeyConstraint(
+            ["conversation_id", "org_id"],
+            ["assistant_conversations.id", "assistant_conversations.org_id"],
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    conversation_id: Mapped[uuid.UUID] = uuid_col()
+    action: Mapped[str] = mapped_column(String)
+    payload: Mapped[dict] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String, default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class BreakGlassScope(Base):

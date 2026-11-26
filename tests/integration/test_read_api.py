@@ -13,8 +13,51 @@ from core.settings import get_settings
 from services.api import auth
 
 
+PDF_BYTES = b"%PDF-1.4 integration test resume"
+
+
 def auth_header(sub: str) -> dict:
     return {"Authorization": f"Bearer {sub}"}
+
+
+def resume_file(name: str = "resume.pdf") -> dict:
+    return {"file": (name, PDF_BYTES, "application/pdf")}
+
+
+class FakeStorage:
+    store: dict[str, bytes] = {}
+
+    def upload_bytes(self, key: str, body: bytes, content_type: str) -> str:
+        FakeStorage.store[key] = body
+        return f"s3://test-bucket/{key}"
+
+    def download_bytes(self, key: str) -> bytes:
+        return FakeStorage.store.get(key, PDF_BYTES)
+
+
+class FakeExtraction:
+    def __init__(self) -> None:
+        self.started: list[str] = []
+
+    async def start_workflow(self, workflow, arg, id, task_queue):
+        self.started.append(id)
+
+    def get_workflow_handle(self, workflow_id: str):
+        raise NotImplementedError
+
+
+@pytest.fixture
+def extraction(monkeypatch) -> FakeExtraction:
+    FakeStorage.store = {}
+    fake = FakeExtraction()
+
+    async def fake_client():
+        return fake
+
+    monkeypatch.setattr("core.resumes.Storage", FakeStorage)
+    monkeypatch.setattr("services.api.routes.resumes.Storage", FakeStorage)
+    monkeypatch.setattr("services.api.routes.resumes.temporal_client", fake_client)
+    return fake
 
 
 @pytest.fixture

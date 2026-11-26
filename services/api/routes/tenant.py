@@ -37,8 +37,10 @@ class CallOut(BaseModel):
 
 class ApplicationOut(BaseModel):
     application_id: UUID
+    candidate_id: UUID
     candidate_name: str
     candidate_email: str
+    job_id: UUID
     job_title: str
     stage: str
     overall_score: float | None
@@ -78,8 +80,10 @@ def _as_application(application: Application, score: Score | None) -> Applicatio
     candidate = application.candidate
     return ApplicationOut(
         application_id=application.id,
+        candidate_id=candidate.id,
         candidate_name=f"{candidate.first_name} {candidate.last_name}",
         candidate_email=candidate.email,
+        job_id=application.job_id,
         job_title=application.job.title,
         stage=application.stage,
         overall_score=_overall(score),

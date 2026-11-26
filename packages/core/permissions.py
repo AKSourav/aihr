@@ -89,6 +89,29 @@ ROUTES: list[tuple[str, str, Permission]] = [
     ("POST", "/tenants/{org_id}/candidates", Permission.CANDIDATE_WRITE),
     ("POST", "/tenants/{org_id}/candidates/import", Permission.CANDIDATE_WRITE),
     ("POST", "/tenants/{org_id}/applications", Permission.CANDIDATE_WRITE),
+    ("POST", "/tenants/{org_id}/candidates/resumes", Permission.CANDIDATE_WRITE),
+    ("POST", "/tenants/{org_id}/candidates/{candidate_id}/resume", Permission.CANDIDATE_WRITE),
+    ("GET", "/tenants/{org_id}/candidates/{candidate_id}/resume", Permission.CANDIDATE_READ),
+    ("GET", "/tenants/{org_id}/candidates/{candidate_id}/resume/file", Permission.CANDIDATE_READ),
+    ("GET", "/tenants/{org_id}/jobs/{job_id}/resumes", Permission.CANDIDATE_READ),
+    ("GET", "/tenants/{org_id}/jobs/{job_id}/candidates", Permission.SCORE_READ),
+    ("GET", "/tenants/{org_id}/jobs/{job_id}/shortlist-rules", Permission.JOB_READ),
+    ("PUT", "/tenants/{org_id}/jobs/{job_id}/shortlist-rules", Permission.JOB_WRITE),
+    ("POST", "/tenants/{org_id}/test-calls", Permission.CALL_CREATE),
+    ("POST", "/tenants/{org_id}/jobs/{job_id}/candidate-summary", Permission.CANDIDATE_WRITE),
+    ("POST", "/tenants/{org_id}/assistant/messages", Permission.CANDIDATE_READ),
+    ("GET", "/tenants/{org_id}/assistant/messages", Permission.CANDIDATE_READ),
+    (
+        "POST",
+        "/tenants/{org_id}/assistant/actions/{action_id}/confirm",
+        Permission.CALL_CREATE,
+    ),
+    (
+        "DELETE",
+        "/tenants/{org_id}/assistant/conversations/{conversation_id}",
+        Permission.CANDIDATE_READ,
+    ),
+    ("POST", "/tenants/{org_id}/mcp", Permission.CANDIDATE_READ),
 ]
 
 ACCOUNT_ROUTES: list[tuple[str, str, Permission]] = [

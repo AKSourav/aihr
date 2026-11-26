@@ -12,3 +12,7 @@ async def temporal_client() -> Client:
 
 def screening_workflow_id(job_id: object, candidate_id: object) -> str:
     return f"call-{job_id}-{candidate_id}"
+
+
+def resume_workflow_id(resume_id: object) -> str:
+    return f"resume-{resume_id}"

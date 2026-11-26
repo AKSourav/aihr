@@ -56,6 +56,37 @@ async def tenant_context(
     raise HTTPException(status_code=404, detail="not found")
 
 
+async def ensure(
+    session: AsyncSession, context: TenantContext, permission: Permission
+) -> None:
+    if context.via_break_glass:
+        session.add(
+            AuditEvent(
+                org_id=context.org_id,
+                actor_user_id=context.user.id,
+                entity_type="organization",
+                entity_id=context.org_id,
+                event_type="break_glass_access",
+                payload={"permission": str(permission)},
+            )
+        )
+        await session.commit()
+        logger.warning(
+            "break glass access",
+            extra={
+                "org_id": str(context.org_id),
+                "user_id": str(context.user.id),
+                "permission": str(permission),
+            },
+        )
+        return
+
+    if context.role is not None and grants(context.role, permission):
+        return
+
+    raise HTTPException(status_code=403, detail="forbidden")
+
+
 def require(
     permission: Permission,
 ) -> Callable[..., Coroutine[Any, Any, TenantContext]]:
@@ -63,32 +94,8 @@ def require(
         context: TenantContext = Depends(tenant_context),
         session: AsyncSession = Depends(get_session),
     ) -> TenantContext:
-        if context.via_break_glass:
-            session.add(
-                AuditEvent(
-                    org_id=context.org_id,
-                    actor_user_id=context.user.id,
-                    entity_type="organization",
-                    entity_id=context.org_id,
-                    event_type="break_glass_access",
-                    payload={"permission": str(permission)},
-                )
-            )
-            await session.commit()
-            logger.warning(
-                "break glass access",
-                extra={
-                    "org_id": str(context.org_id),
-                    "user_id": str(context.user.id),
-                    "permission": str(permission),
-                },
-            )
-            return context
-
-        if context.role is not None and grants(context.role, permission):
-            return context
-
-        raise HTTPException(status_code=403, detail="forbidden")
+        await ensure(session, context, permission)
+        return context
 
     return dependency
 

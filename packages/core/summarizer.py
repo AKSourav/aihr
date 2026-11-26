@@ -6,6 +6,7 @@ from jinja2 import Environment, FileSystemLoader
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
+from core.llm import client as llm_client
 from core.schemas import CallSummary, ResolvedProvider, TokenUsage, Turn
 from core.settings import get_settings
 
@@ -92,13 +93,7 @@ def render_summary_prompt(job_title: str, rubric: list[dict], question_plan: dic
 
 
 def _client(llm: ResolvedProvider | None = None) -> AsyncOpenAI:
-    settings = get_settings()
-    api_key = llm.api_key if llm else settings.llm_api_key
-    base_url = (llm.base_url if llm else None) or settings.llm_base_url
-    client_kwargs = {"api_key": api_key, "timeout": SUMMARY_TIMEOUT_S}
-    if base_url:
-        client_kwargs["base_url"] = base_url
-    return AsyncOpenAI(**client_kwargs)
+    return llm_client(llm, timeout=SUMMARY_TIMEOUT_S)
 
 
 async def moderate(text: str) -> list[str]:

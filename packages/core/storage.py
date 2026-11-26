@@ -25,3 +25,11 @@ class Storage:
     def download_json(self, key: str) -> Any:
         obj = self._client.get_object(Bucket=self._bucket, Key=key)
         return json.loads(obj["Body"].read())
+
+    def upload_bytes(self, key: str, body: bytes, content_type: str) -> str:
+        self._client.put_object(Bucket=self._bucket, Key=key, Body=body, ContentType=content_type)
+        return f"s3://{self._bucket}/{key}"
+
+    def download_bytes(self, key: str) -> bytes:
+        obj = self._client.get_object(Bucket=self._bucket, Key=key)
+        return obj["Body"].read()

@@ -1,8 +1,7 @@
-import re
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -11,28 +10,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.db import get_session
 from core.models import Application, AuditEvent, Candidate, Job
 from core.permissions import Permission
+from core.resumes import rejection, store_resume
+from core.schemas import EMAIL_RE
 from services.api.authz import TenantContext, require
+from services.api.routes.resumes import start_extraction
 from services.api.routes.tenant import ApplicationOut, _as_application
 
 router = APIRouter(prefix="/tenants/{org_id}", tags=["candidates"])
 
-EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MAX_IMPORT_ROWS = 500
 RowStatus = Literal["created", "matched", "duplicate", "invalid"]
-
-
-class CandidateRequest(BaseModel):
-    first_name: str = Field(min_length=1, max_length=100)
-    last_name: str = Field(min_length=1, max_length=100)
-    email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=320)
-    phone_e164: str | None = Field(default=None, max_length=20)
-    job_id: UUID | None = None
 
 
 class CandidateOut(BaseModel):
     candidate_id: UUID
     created: bool
     application_id: UUID | None
+    resume_id: UUID
 
 
 class ApplicationRequest(BaseModel):
@@ -157,24 +151,40 @@ async def _import_row(
 
 @router.post("/candidates", response_model=CandidateOut, status_code=201)
 async def add_candidate(
-    body: CandidateRequest,
+    file: UploadFile = File(...),
+    first_name: str = Form(..., max_length=100),
+    last_name: str = Form(..., max_length=100),
+    email: str = Form(..., max_length=320),
+    phone_e164: str | None = Form(default=None, max_length=20),
+    job_id: UUID | None = Form(default=None),
     context: TenantContext = Depends(require(Permission.CANDIDATE_WRITE)),
     session: AsyncSession = Depends(get_session),
 ) -> CandidateOut:
-    job = None
-    if body.job_id is not None:
-        job = await _job_in_org(session, context.org_id, body.job_id)
+    first_name = first_name.strip()
+    last_name = last_name.strip()
+    email = email.strip().lower()
+    phone = (phone_e164 or "").strip() or None
 
-    email = body.email.strip().lower()
-    phone = (body.phone_e164 or "").strip() or None
+    reason = _rejection(first_name, last_name, email)
+    if reason is not None:
+        raise HTTPException(status_code=422, detail=reason)
+
+    data = await file.read()
+    file_reason = rejection(data)
+    if file_reason is not None:
+        raise HTTPException(status_code=422, detail=file_reason)
+
+    job = None
+    if job_id is not None:
+        job = await _job_in_org(session, context.org_id, job_id)
 
     candidate = await _candidate_by_email(session, context.org_id, email)
     created = candidate is None
     if candidate is None:
         candidate = Candidate(
             org_id=context.org_id,
-            first_name=body.first_name.strip(),
-            last_name=body.last_name.strip(),
+            first_name=first_name,
+            last_name=last_name,
             email=email,
             phone_e164=phone,
         )
@@ -196,12 +206,22 @@ async def add_candidate(
             session.add(application)
             await session.flush()
 
+    resume = await store_resume(
+        session,
+        context.org_id,
+        data,
+        file.filename,
+        candidate_id=candidate.id,
+        job_id=job.id if job is not None else None,
+    )
     await session.commit()
+    await start_extraction([resume.id])
 
     return CandidateOut(
         candidate_id=candidate.id,
         created=created,
         application_id=application.id if application is not None else None,
+        resume_id=resume.id,
     )
 
 

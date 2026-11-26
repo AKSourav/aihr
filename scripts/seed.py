@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -15,9 +16,12 @@ from core.models import (
     Job,
     Membership,
     Organization,
+    Resume,
     Score,
     User,
 )
+from core.resumes import resume_key
+from core.storage import Storage
 
 ACCOUNT_NAME = "Acme Group"
 ORG_NAME = "Acme Fintech"
@@ -250,6 +254,87 @@ async def upsert_profile(session: AsyncSession, candidate: Candidate, summary: s
     return profile
 
 
+def _pdf(lines: list[str]) -> bytes:
+    """A minimal one-page PDF so the demo's "View PDF" button opens something real."""
+    content = "BT /F1 11 Tf 56 760 Td 15 TL\n"
+    for line in lines:
+        safe = line.replace("\\", "").replace("(", "").replace(")", "")
+        content += f"({safe[:95]}) Tj T*\n"
+    content += "ET\n"
+    stream = content.encode("latin-1", "replace")
+
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"endstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for index, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += f"{index} 0 obj\n".encode() + body + b"\nendobj\n"
+
+    start = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n".encode() + b"0000000000 65535 f \n"
+    for offset in offsets:
+        out += f"{offset:010d} 00000 n \n".encode()
+    out += (
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{start}\n%%EOF\n"
+    ).encode()
+    return bytes(out)
+
+
+async def upsert_resume(
+    session: AsyncSession, candidate: Candidate, job: Job, persona: dict
+) -> Resume:
+    existing = await session.scalar(
+        select(Resume).where(Resume.candidate_id == candidate.id, Resume.job_id == job.id)
+    )
+    if existing is not None:
+        return existing
+
+    name = f"{candidate.first_name} {candidate.last_name}"
+    lines = [name, candidate.email, "", persona["summary"]]
+    resume_id = uuid.uuid4()
+    key = resume_key(candidate.org_id, resume_id)
+    pdf_url = await asyncio.to_thread(
+        Storage().upload_bytes, key, _pdf(lines), "application/pdf"
+    )
+
+    resume = Resume(
+        id=resume_id,
+        org_id=candidate.org_id,
+        candidate_id=candidate.id,
+        job_id=job.id,
+        pdf_url=pdf_url,
+        filename=f"{persona['key']}.pdf",
+        byte_size=0,
+        status="ready",
+        text="\n".join(lines),
+        data={
+            "first_name": candidate.first_name,
+            "last_name": candidate.last_name,
+            "email": candidate.email,
+            "phone_e164": candidate.phone_e164,
+            "links": {},
+            "skills": persona.get("skills", []),
+            "experience": [],
+            "education": [],
+            "total_years_experience": persona.get("years"),
+        },
+        model_version="seed",
+        prompt_version="seed",
+        created_at=datetime.now(timezone.utc),
+    )
+    session.add(resume)
+    await session.flush()
+    return resume
+
+
 async def upsert_application(session: AsyncSession, candidate: Candidate, job: Job) -> Application:
     application = await session.scalar(
         select(Application).where(Application.candidate_id == candidate.id, Application.job_id == job.id)
@@ -297,11 +382,13 @@ async def seed() -> None:
         for index, persona in enumerate(PERSONAS):
             candidate = await upsert_candidate(session, org, persona, phone_overrides, index)
             await upsert_profile(session, candidate, persona["summary"])
+            await upsert_resume(session, candidate, backend_job, persona)
             application = await upsert_application(session, candidate, backend_job)
             await upsert_initial_score(session, application)
 
         resume_candidate = await upsert_candidate(session, org, RESUME_CANDIDATE, phone_overrides, len(PERSONAS))
         await upsert_profile(session, resume_candidate, RESUME_CANDIDATE["summary"])
+        await upsert_resume(session, resume_candidate, sde1_job, RESUME_CANDIDATE)
         resume_application = await upsert_application(session, resume_candidate, sde1_job)
         await upsert_initial_score(session, resume_application)
 
