@@ -11,26 +11,13 @@ from core.models import CallSummary as CallSummaryRow
 from core.models import LlmUsage, Score
 from core.providers import resolve_providers
 from core.schemas import Turn
+from core.scoring import weighted_overall
 from core.settings import get_settings
 from core.storage import Storage
 from core.summarizer import PROMPT_VERSION, moderate, summarize_transcript
 from services.temporal_worker.shared import SummarizeCallInput
 
 logger = logging.getLogger(__name__)
-
-
-def _weighted_overall(rubric: list[dict], rubric_scores: list) -> float:
-    weighted_sum = 0.0
-    total_weight = 0.0
-    for item in rubric:
-        match = next((rs for rs in rubric_scores if rs.dimension == item["dimension"]), None)
-        if match is None:
-            continue
-        weighted_sum += match.score * item["weight"]
-        total_weight += item["weight"]
-    if total_weight == 0:
-        return 0.0
-    return round(weighted_sum / total_weight, 4)
 
 
 @activity.defn
@@ -130,7 +117,7 @@ async def summarize_call(input: SummarizeCallInput) -> None:
                 application_id=call.application_id,
                 stage="post_call",
                 breakdown={
-                    "overall": _weighted_overall(job.rubric, summary.rubric_scores),
+                    "overall": weighted_overall(job.rubric, summary.rubric_scores),
                     **{rs.dimension: rs.score for rs in summary.rubric_scores},
                 },
             )

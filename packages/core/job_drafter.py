@@ -8,7 +8,8 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel
 
-from core.schemas import QuestionPlan, Rubric
+from core.llm import client as llm_client
+from core.schemas import QuestionPlan, ResolvedProvider, Rubric
 from core.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -45,17 +46,16 @@ def render_draft_prompt(title: str, max_minutes: int) -> str:
     )
 
 
-def _client() -> AsyncOpenAI:
-    settings = get_settings()
-    client_kwargs = {"api_key": settings.llm_api_key, "timeout": DRAFT_TIMEOUT_S}
-    if settings.llm_base_url:
-        client_kwargs["base_url"] = settings.llm_base_url
-    return AsyncOpenAI(**client_kwargs)
+def _client(llm: ResolvedProvider | None = None) -> AsyncOpenAI:
+    return llm_client(llm, timeout=DRAFT_TIMEOUT_S)
 
 
-async def draft_job(title: str, description: str) -> JobDraft:
+async def draft_job(
+    title: str, description: str, llm: ResolvedProvider | None = None
+) -> JobDraft:
     settings = get_settings()
-    client = _client()
+    client = _client(llm)
+    model = (llm.model if llm else "") or settings.llm_summary_model
 
     messages: list[ChatCompletionMessageParam] = [
         {"role": "system", "content": render_draft_prompt(title, settings.max_call_duration_min)},
@@ -66,7 +66,7 @@ async def draft_job(title: str, description: str) -> JobDraft:
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             response = await client.chat.completions.create(
-                model=settings.llm_summary_model,
+                model=model,
                 messages=messages,
                 response_format={"type": "json_object"},
                 max_completion_tokens=MAX_DRAFT_TOKENS,

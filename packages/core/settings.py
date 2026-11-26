@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     smtp_starttls: bool = False
     smtp_from: str = "aihr <no-reply@aihr.local>"
 
+    assistant_retention_days: int = 30
+
     dev_routes_enabled: bool = False
 
     call_mode: str = "web"

@@ -2,10 +2,17 @@ import uuid
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from test_read_api import auth_header, client, make_member  # noqa: F401
+from test_read_api import (  # noqa: F401
+    auth_header,
+    client,
+    extraction,
+    make_member,
+    resume_file,
+)
 
 from core.models import Application, Candidate, Job
 from core.permissions import Permission, grants
+from core.settings import get_settings
 
 
 def job_payload(title: str) -> dict:
@@ -143,7 +150,12 @@ async def test_creating_a_job_in_another_org_is_404(client, session, two_tenants
     assert await count_jobs(session, two_tenants["org_b"], title) == 0
 
 
-async def test_drafting_without_an_llm_configured_is_503(client, session, two_tenants):
+async def test_drafting_without_an_llm_configured_is_503(
+    monkeypatch, client, session, two_tenants
+):
+    monkeypatch.setenv("LLM_API_KEY", "")
+    monkeypatch.setenv("LLM_SUMMARY_MODEL", "")
+    get_settings.cache_clear()
     sub = await make_member(session, two_tenants["org_a"], "owner")
 
     response = await client.post(
@@ -168,18 +180,21 @@ async def test_a_viewer_may_not_draft_a_job(client, session, two_tenants):
     assert response.status_code == 403
 
 
-async def test_adding_a_candidate_creates_an_application(client, session, two_tenants):
+async def test_adding_a_candidate_creates_an_application(
+    client, session, two_tenants, extraction
+):
     sub = await make_member(session, two_tenants["org_a"], "recruiter")
     email = f"{uuid.uuid4().hex}@candidates.test"
 
     response = await client.post(
         f"/tenants/{two_tenants['org_a']}/candidates",
-        json={
+        data={
             "first_name": "Nina",
             "last_name": "Iyer",
             "email": email,
             "job_id": str(two_tenants["job_a"]),
         },
+        files=resume_file(),
         headers=auth_header(sub),
     )
 
@@ -187,6 +202,8 @@ async def test_adding_a_candidate_creates_an_application(client, session, two_te
     body = response.json()
     assert body["created"] is True
     assert body["application_id"] is not None
+    assert body["resume_id"] is not None
+    assert extraction.started == [f"resume-{body['resume_id']}"]
 
     application = await session.scalar(
         select(Application).where(Application.id == uuid.UUID(body["application_id"]))
@@ -196,17 +213,21 @@ async def test_adding_a_candidate_creates_an_application(client, session, two_te
     assert application.org_id == two_tenants["org_a"]
 
 
-async def test_a_duplicate_email_reuses_the_candidate(client, session, two_tenants):
+async def test_a_duplicate_email_reuses_the_candidate(client, session, two_tenants, extraction):
     sub = await make_member(session, two_tenants["org_a"], "recruiter")
     email = f"{uuid.uuid4().hex}@candidates.test"
     payload = {"first_name": "Nina", "last_name": "Iyer", "email": email}
 
     first = await client.post(
-        f"/tenants/{two_tenants['org_a']}/candidates", json=payload, headers=auth_header(sub)
+        f"/tenants/{two_tenants['org_a']}/candidates",
+        data=payload,
+        files=resume_file(),
+        headers=auth_header(sub),
     )
     second = await client.post(
         f"/tenants/{two_tenants['org_a']}/candidates",
-        json={**payload, "first_name": "Renamed"},
+        data={**payload, "first_name": "Renamed"},
+        files=resume_file(),
         headers=auth_header(sub),
     )
 
@@ -222,18 +243,19 @@ async def test_a_duplicate_email_reuses_the_candidate(client, session, two_tenan
     assert candidate.first_name == "Nina"
 
 
-async def test_a_job_id_from_another_org_is_404(client, session, two_tenants):
+async def test_a_job_id_from_another_org_is_404(client, session, two_tenants, extraction):
     sub = await make_member(session, two_tenants["org_a"], "recruiter")
     email = f"{uuid.uuid4().hex}@candidates.test"
 
     response = await client.post(
         f"/tenants/{two_tenants['org_a']}/candidates",
-        json={
+        data={
             "first_name": "Nina",
             "last_name": "Iyer",
             "email": email,
             "job_id": str(two_tenants["job_b"]),
         },
+        files=resume_file(),
         headers=auth_header(sub),
     )
 
@@ -337,7 +359,7 @@ async def test_importing_against_another_orgs_job_is_404(client, session, two_te
     assert await count_candidates(session, two_tenants["org_a"], domain) == 0
 
 
-async def test_a_mixed_import_reports_every_status(client, session, two_tenants):
+async def test_a_mixed_import_reports_every_status(client, session, two_tenants, extraction):
     sub = await make_member(session, two_tenants["org_a"], "recruiter")
     domain = f"{uuid.uuid4().hex}.test"
     known = f"known@{domain}"
@@ -345,7 +367,8 @@ async def test_a_mixed_import_reports_every_status(client, session, two_tenants)
 
     await client.post(
         f"/tenants/{two_tenants['org_a']}/candidates",
-        json={"first_name": "Known", "last_name": "Person", "email": known},
+        data={"first_name": "Known", "last_name": "Person", "email": known},
+        files=resume_file(),
         headers=auth_header(sub),
     )
 

@@ -50,7 +50,7 @@ class FakeClient:
 def fake_client(monkeypatch):
     def install(contents: list[str]) -> FakeClient:
         client = FakeClient(contents)
-        monkeypatch.setattr("core.job_drafter.AsyncOpenAI", lambda **kwargs: client)
+        monkeypatch.setattr("core.llm.AsyncOpenAI", lambda **kwargs: client)
         return client
 
     return install

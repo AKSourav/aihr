@@ -50,6 +50,8 @@ const STATUS_TONE = {
   expired: "bad", lost: "bad", failed: "bad", no_answer: "bad", voicemail: "bad",
   busy: "bad", declined: "bad", unreachable: "bad",
   created: "ok", matched: "info", duplicate: "warn", invalid: "bad",
+  awaiting_resume: "warn", extracting: "info", ready: "ok", rejected: "bad",
+  qualified: "ok", self_test: "info", shortlisted: "info",
 };
 const ACTIVE_STATUSES = new Set(["inviting", "invited", "in_progress", "ringing", "dispatching"]);
 const STATUS_LABEL = { invited: "invite sent", in_progress: "in call" };
@@ -77,7 +79,12 @@ function toast(message, tone) {
 
 // ---------------------------------------------------------------- state and API
 
-const state = { me: null, org: null, pollTimer: null };
+const state = {
+  me: null,
+  org: null,
+  pollTimer: null,
+  assistant: { conversationId: null, messages: [], pending: null, busy: false },
+};
 
 function can(permission) {
   return Boolean(state.org && state.org.permissions.includes(permission));
@@ -94,12 +101,7 @@ class ApiError extends Error {
   }
 }
 
-async function api(method, path, body) {
-  const res = method === "GET"
-    ? await window.aihr.get(path)
-    : method === "PUT"
-      ? await window.aihr.put(path, body)
-      : await window.aihr.post(path, body);
+function unwrap(res) {
   if (res.status === 401) {
     showLogin("Your session ended. Please sign in again.");
     throw new ApiError(401, "signed out");
@@ -107,6 +109,31 @@ async function api(method, path, body) {
   if (!res.ok) throw new ApiError(res.status, res.data && res.data.detail);
   return res.data;
 }
+
+async function api(method, path, body) {
+  const res = method === "GET"
+    ? await window.aihr.get(path)
+    : method === "PUT"
+      ? await window.aihr.put(path, body)
+      : method === "DELETE"
+        ? await window.aihr.del(path)
+        : await window.aihr.post(path, body);
+  return unwrap(res);
+}
+
+async function upload(path, payload) {
+  return unwrap(await window.aihr.upload(path, payload));
+}
+
+async function openFile(path, name) {
+  return unwrap(await window.aihr.openFile(path, name));
+}
+
+const readFiles = (list) =>
+  Promise.all([...list].map(async (f) => ({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) })));
+
+const MAX_RESUME_BYTES = 10 * 1024 * 1024;
+const MAX_RESUME_FILES = 20;
 
 const tenantPath = (suffix) => `/tenants/${state.org.org_id}${suffix}`;
 
@@ -222,7 +249,7 @@ function fillOrgSelect() {
   select.disabled = false;
 }
 
-const NAV = new Set(["jobs", "applications", "providers", "secrets", "account"]);
+const NAV = new Set(["assistant", "jobs", "applications", "providers", "secrets", "account"]);
 
 function setActiveNav(name) {
   for (const el of document.querySelectorAll("[data-nav]")) {
@@ -238,7 +265,9 @@ async function route() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   setActiveNav(NAV.has(parts[0]) ? parts[0] : "applications");
   try {
-    if (parts[0] === "providers") {
+    if (parts[0] === "assistant") {
+      await assistantView();
+    } else if (parts[0] === "providers") {
       await providersView();
     } else if (parts[0] === "account") {
       await accountProvidersView();
@@ -520,23 +549,34 @@ async function jobView(jobId) {
 
   const candidates = can("candidate:write")
     ? h("div", { class: "card" },
-        h("div", { class: "card-head" }, h("h2", {}, "Candidates")),
+        h("div", { class: "card-head" }, h("h2", {}, "Add candidates")),
         h("div", { class: "card-body" },
           h("div", { class: "actions" },
-            h("button", { class: "btn btn-primary", onclick: toggle("add", () => addCandidateForm(job)) }, "Add candidate"),
-            h("button", { class: "btn", onclick: toggle("import", () => importCandidatesForm(job)) }, "Import candidates")),
-          h("p", { class: "hint" }, "New candidates are shortlisted against this role and appear under Applications."),
+            h("button", { class: "btn btn-primary", onclick: toggle("resumes", () => uploadResumesForm(job)) }, "Upload resumes"),
+            h("button", { class: "btn", onclick: toggle("add", () => addCandidateForm(job)) }, "Add one candidate"),
+            h("button", { class: "btn", onclick: toggle("import", () => importCandidatesForm(job)) }, "Import a CSV")),
+          h("p", { class: "hint" },
+            "Uploading resumes is the quickest path — each PDF becomes a candidate. A CSV import " +
+            "creates candidates with no resume yet, and they cannot be screened until one is attached."),
           panel))
     : null;
 
+  const rules = can("job:read") ? await optional(api("GET", tenantPath(`/jobs/${jobId}/shortlist-rules`))) : null;
+  const rulesValue = rules && !rules.missing ? rules.rules : null;
+  const rankedCard = await jobCandidatesCard(job, rulesValue);
+  const rulesCard = can("job:write") ? shortlistRulesCard(job, rulesValue) : null;
   const providerCard = await jobProviderCard(job);
 
   render(
     h("a", { class: "crumb", href: "#/jobs" }, "← Jobs"),
     h("div", { class: "page-head" },
       h("div", {}, h("h1", {}, job.title), h("div", { class: "sub" }, `Created ${fmtDateTime(job.created_at)}`)),
-      h("div", { class: "toolbar" }, h("button", { class: "btn", onclick: route }, "Refresh"))),
+      h("div", { class: "toolbar" },
+        can("call:create") ? h("button", { class: "btn", onclick: () => startTestCall(job) }, "Test the AI agent") : null,
+        h("button", { class: "btn", onclick: route }, "Refresh"))),
     candidates,
+    rankedCard,
+    rulesCard,
     providerCard,
     h("div", { class: "card" },
       h("div", { class: "card-head" }, h("h2", {}, "Rubric")),
@@ -567,36 +607,284 @@ async function jobView(jobId) {
         : h("div", { class: "empty" }, "No FAQ answers.")));
 }
 
+async function startTestCall(job) {
+  try {
+    const res = await api("POST", tenantPath("/test-calls"), { job_id: job.job_id });
+    toast("Opening a test call in your browser — you join as the candidate.", "ok");
+    window.open(res.join_url, "_blank");
+  } catch (err) {
+    if (err.status === 401) return;
+    toast(err.status === 503
+      ? "The voice service isn't configured on this server."
+      : err.message, "bad");
+  }
+}
+
+async function jobCandidatesCard(job, rules) {
+  const first = await optional(api("GET", tenantPath(`/jobs/${job.job_id}/candidates?limit=${PAGE}&offset=0`)));
+  if (first && first.missing) {
+    return h("div", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", {}, "Candidates")),
+      h("div", { class: "empty" }, "You don't have permission to see scores for this role."));
+  }
+
+  let rows = first || [];
+  let exhausted = rows.length < PAGE;
+  let filter = "";
+  let qualifiedOnly = false;
+  const selected = new Set();
+
+  const tbody = h("tbody");
+  const count = h("div", { class: "sub" });
+  const more = h("button", { class: "btn btn-sm", onclick: loadMore }, "Load more");
+  const panel = h("div", {});
+  const summarize = h("button", { class: "btn btn-primary btn-sm", onclick: runSummary }, "Summarize selected");
+
+  const search = h("input", {
+    class: "input", type: "search", placeholder: "Search name, email, stage",
+    oninput: (e) => { filter = e.target.value; draw(); },
+  });
+  const onlyBox = h("input", {
+    type: "checkbox",
+    onchange: (e) => { qualifiedOnly = e.target.checked; draw(); },
+  });
+
+  function visibleRows() {
+    const needle = filter.trim().toLowerCase();
+    return rows.filter((r) =>
+      (!qualifiedOnly || r.qualifies) &&
+      (!needle || [r.candidate_name, r.candidate_email, r.stage].some((v) => String(v).toLowerCase().includes(needle))));
+  }
+
+  function scoreCell(value) {
+    return value === null || value === undefined
+      ? h("span", { class: "muted" }, "—")
+      : meter(value);
+  }
+
+  function draw() {
+    const visible = visibleRows();
+    count.textContent = `${rows.length}${exhausted ? "" : "+"} candidates, best first`;
+    summarize.disabled = selected.size < 2 || selected.size > 10;
+    summarize.textContent = selected.size ? `Summarize ${selected.size} selected` : "Summarize selected";
+
+    tbody.replaceChildren(...(visible.length ? visible.map((r) => {
+      const box = h("input", {
+        type: "checkbox",
+        onclick: (e) => e.stopPropagation(),
+        onchange: (e) => {
+          if (e.target.checked) selected.add(r.application_id);
+          else selected.delete(r.application_id);
+          draw();
+        },
+      });
+      box.checked = selected.has(r.application_id);
+      return h("tr", {
+        class: r.qualifies ? "clickable qualified" : "clickable",
+        onclick: () => (location.hash = `#/applications/${r.application_id}`),
+      },
+        h("td", { style: "width:32px" }, box),
+        h("td", { class: "num muted" }, String(r.rank)),
+        h("td", {}, r.candidate_name, h("span", { class: "secondary" }, r.candidate_email)),
+        h("td", {}, badge(r.stage)),
+        h("td", { style: "width:150px" }, scoreCell(r.resume_score)),
+        h("td", { style: "width:150px" }, scoreCell(r.call_score)),
+        h("td", { class: "num muted" }, fmtDate(r.created_at)));
+    }) : [
+      h("tr", {}, h("td", { colspan: "7" }, h("div", { class: "empty" },
+        rows.length
+          ? "No candidates match."
+          : "No candidates yet. Upload resumes above and they'll be scored and ranked here."))),
+    ]));
+    more.hidden = exhausted || Boolean(filter.trim()) || qualifiedOnly;
+  }
+
+  async function loadMore() {
+    more.disabled = true;
+    try {
+      const next = await api("GET", tenantPath(`/jobs/${job.job_id}/candidates?limit=${PAGE}&offset=${rows.length}`));
+      rows = rows.concat(next);
+      exhausted = next.length < PAGE;
+      draw();
+    } catch (err) {
+      toast(err.message, "bad");
+    } finally {
+      more.disabled = false;
+    }
+  }
+
+  async function runSummary() {
+    summarize.disabled = true;
+    summarize.textContent = "Summarising…";
+    try {
+      const res = await api("POST", tenantPath(`/jobs/${job.job_id}/candidate-summary`), {
+        application_ids: [...selected],
+      });
+      panel.replaceChildren(summaryPanel(res, () => panel.replaceChildren()));
+    } catch (err) {
+      if (err.status !== 401) {
+        toast(err.status === 503 ? "AI summaries aren't configured on this server." : err.message, "bad");
+      }
+    } finally {
+      draw();
+    }
+  }
+
+  const head = h("div", { class: "card-head" },
+    h("h2", {}, "Candidates"),
+    h("div", { class: "toolbar" },
+      search,
+      h("label", { class: "hint", style: "display:flex;align-items:center;gap:6px" }, onlyBox, "Qualified only"),
+      can("candidate:write") ? summarize : null));
+
+  const card = h("div", { class: "card" },
+    head,
+    h("div", { class: "card-body" }, count,
+      rules && (rules.top_k || rules.min_score)
+        ? h("p", { class: "hint" },
+            'Highlighted rows match this role\'s shortlist rules. The "qualified" stage is set once ' +
+            "and never removed, so it can outlast a change to the rules.")
+        : null),
+    h("table", { class: "table" },
+      h("thead", {}, h("tr", {}, ["", "#", "Candidate", "Stage", "Resume", "Call", "Added"].map((t) => h("th", {}, t)))),
+      tbody),
+    h("div", { class: "card-body" }, panel),
+    h("div", { style: "margin:12px;text-align:center" }, more));
+
+  draw();
+  return card;
+}
+
+function summaryPanel(res, onClear) {
+  return h("div", { class: "card", style: "margin-top:12px" },
+    h("div", { class: "card-head" },
+      h("h2", {}, "Comparison"),
+      h("button", { class: "btn btn-sm", onclick: onClear }, "Clear")),
+    h("div", { class: "card-body" },
+      h("p", { class: "summary-text" }, res.summary),
+      h("div", { class: "grid" }, ...res.candidates.map((c) =>
+        h("div", { class: "card" },
+          h("div", { class: "card-head" }, h("h2", {}, c.name)),
+          h("div", { class: "card-body" },
+            h("div", { class: "field-label" }, "Strengths"),
+            c.strengths.length
+              ? h("ul", { class: "list" }, ...c.strengths.map((s) => h("li", {}, s)))
+              : h("p", { class: "muted" }, "None recorded."),
+            h("div", { class: "field-label" }, "Gaps"),
+            c.gaps.length
+              ? h("ul", { class: "list" }, ...c.gaps.map((s) => h("li", {}, s)))
+              : h("p", { class: "muted" }, "None recorded."))))),
+      h("div", { class: "field-label" }, "Recommendation"),
+      h("p", { class: "summary-text" }, res.recommendation)));
+}
+
+function shortlistRulesCard(job, rules) {
+  const current = rules || {};
+  const topK = h("input", {
+    class: "input", type: "number", min: "1", max: "1000", placeholder: "off",
+    value: current.top_k == null ? "" : String(current.top_k),
+  });
+  const minScore = h("input", {
+    class: "input", type: "number", min: "0", max: "100", placeholder: "off",
+    value: current.min_score == null ? "" : String(Math.round(current.min_score * 100)),
+  });
+  const combine = h("select", { class: "input" },
+    h("option", { value: "all" }, "match all rules"),
+    h("option", { value: "any" }, "match any rule"));
+  combine.value = current.combine || "all";
+  const advance = h("input", { type: "checkbox" });
+  advance.checked = current.auto_advance !== false;
+
+  const save = h("button", { class: "btn btn-primary" }, "Save rules");
+  const error = h("p", { class: "error" });
+  error.hidden = true;
+
+  save.addEventListener("click", async () => {
+    error.hidden = true;
+    save.disabled = true;
+    save.textContent = "Saving…";
+    try {
+      const body = {
+        rules: {
+          top_k: topK.value === "" ? null : Number(topK.value),
+          min_score: minScore.value === "" ? null : Number(minScore.value) / 100,
+          combine: combine.value,
+          auto_advance: advance.checked,
+        },
+      };
+      const res = await api("PUT", tenantPath(`/jobs/${job.job_id}/shortlist-rules`), body);
+      toast(`Rules saved. ${res.advanced} candidate(s) advanced to qualified.`, "ok");
+      route();
+    } catch (err) {
+      if (err.status === 401) return;
+      error.hidden = false;
+      error.textContent = err.message;
+    } finally {
+      save.disabled = false;
+      save.textContent = "Save rules";
+    }
+  });
+
+  return h("div", { class: "card" },
+    h("div", { class: "card-head" }, h("h2", {}, "Shortlist rules")),
+    h("div", { class: "card-body" },
+      h("div", { class: "actions" },
+        h("div", { style: "flex:1 1 160px" }, h("label", { class: "field-label" }, "Top K"), topK),
+        h("div", { style: "flex:1 1 160px" }, h("label", { class: "field-label" }, "Minimum score (%)"), minScore),
+        h("div", { style: "flex:1 1 200px" }, h("label", { class: "field-label" }, "Combine"), combine)),
+      h("label", { class: "hint", style: "display:flex;align-items:center;gap:6px;margin:8px 0" },
+        advance, 'Advance matching candidates to "qualified"'),
+      h("p", { class: "hint" },
+        'Matching candidates are highlighted in the list and advanced to "qualified". Advancement ' +
+        "is one-way — changing or clearing these rules never moves anyone back, so a candidate can " +
+        "stay \"qualified\" after they stop matching. Screenings are never started automatically."),
+      h("div", { class: "actions" }, save),
+      error));
+}
+
 function addCandidateForm(job) {
   const first = h("input", { class: "input", placeholder: "First name", required: true });
   const last = h("input", { class: "input", placeholder: "Last name", required: true });
   const email = h("input", { class: "input", type: "email", placeholder: "name@example.com", required: true });
   const phone = h("input", { class: "input", placeholder: "+15550100 (optional)" });
+  const resume = h("input", { class: "input", type: "file", accept: "application/pdf,.pdf", required: true });
   const btn = h("button", { class: "btn btn-primary", type: "submit" }, "Add candidate");
   const error = h("p", { class: "error" });
   error.hidden = true;
 
+  function fail(message) {
+    error.hidden = false;
+    error.textContent = message;
+  }
+
   async function submit() {
     error.hidden = true;
+    const picked = resume.files && resume.files[0];
+    if (!picked) return fail("Attach the candidate's resume as a PDF.");
+    if (picked.size > MAX_RESUME_BYTES) return fail("That resume is larger than 10 MB.");
+
     btn.disabled = true;
     btn.textContent = "Adding…";
     try {
-      const res = await api("POST", tenantPath("/candidates"), {
-        first_name: first.value.trim(),
-        last_name: last.value.trim(),
-        email: email.value.trim(),
-        phone_e164: phone.value.trim() || null,
-        job_id: job.job_id,
+      const res = await upload(tenantPath("/candidates"), {
+        field: "file",
+        fields: {
+          first_name: first.value.trim(),
+          last_name: last.value.trim(),
+          email: email.value.trim(),
+          phone_e164: phone.value.trim() || null,
+          job_id: job.job_id,
+        },
+        files: await readFiles([picked]),
       });
       toast(res.created
-        ? "Candidate added and shortlisted for this role."
-        : "That candidate was already in this organization — they're on this role now.", "ok");
-      for (const field of [first, last, email, phone]) field.value = "";
+        ? "Candidate added — reading their resume now."
+        : "That candidate was already here; their new resume is being read.", "ok");
+      for (const field of [first, last, email, phone, resume]) field.value = "";
       first.focus();
     } catch (err) {
       if (err.status === 401) return;
-      error.hidden = false;
-      error.textContent = err.message;
+      fail(err.message);
     } finally {
       btn.disabled = false;
       btn.textContent = "Add candidate";
@@ -610,8 +898,100 @@ function addCandidateForm(job) {
     h("div", { class: "actions" },
       h("div", { style: "flex:2 1 240px" }, h("label", { class: "field-label" }, "Email"), email),
       h("div", { style: "flex:1 1 180px" }, h("label", { class: "field-label" }, "Phone"), phone)),
+    h("div", {}, h("label", { class: "field-label" }, "Resume (PDF, required)"), resume),
+    h("p", { class: "hint" }, "The resume is read and scored against this role automatically."),
     h("div", { class: "actions" }, btn),
     error);
+}
+
+function uploadResumesForm(job) {
+  const picker = h("input", { class: "input", type: "file", accept: "application/pdf,.pdf", multiple: true });
+  const btn = h("button", { class: "btn btn-primary", type: "submit" }, "Upload resumes");
+  const error = h("p", { class: "error" });
+  const tbody = h("tbody");
+  const table = h("table", { class: "table" },
+    h("thead", {}, h("tr", {}, ["File", "Status", "Detail"].map((t) => h("th", {}, t)))),
+    tbody);
+  error.hidden = true;
+  table.hidden = true;
+
+  let watching = [];
+
+  function draw(rows) {
+    tbody.replaceChildren(...rows.map((r) =>
+      h("tr", {},
+        h("td", {}, r.filename),
+        h("td", {}, badge(r.status)),
+        h("td", { class: "muted" }, r.reason || r.error_detail || "—"))));
+    table.hidden = rows.length === 0;
+  }
+
+  async function poll() {
+    try {
+      const rows = await api("GET", tenantPath(`/jobs/${job.job_id}/resumes`));
+      const mine = rows.filter((r) => watching.includes(r.resume_id));
+      if (mine.length) draw(mine);
+      if (mine.every((r) => r.status === "ready" || r.status === "failed")) {
+        stopPolling();
+        toast("Resumes processed. They are ranked below.", "ok");
+      }
+    } catch (err) {
+      stopPolling();
+    }
+  }
+
+  async function submit() {
+    error.hidden = true;
+    const files = [...(picker.files || [])];
+    if (!files.length) {
+      error.hidden = false;
+      error.textContent = "Choose at least one PDF.";
+      return;
+    }
+    if (files.length > MAX_RESUME_FILES) {
+      error.hidden = false;
+      error.textContent = `At most ${MAX_RESUME_FILES} resumes per upload.`;
+      return;
+    }
+    const big = files.find((f) => f.size > MAX_RESUME_BYTES);
+    if (big) {
+      error.hidden = false;
+      error.textContent = `${big.name} is larger than 10 MB.`;
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = "Uploading…";
+    try {
+      const res = await upload(tenantPath("/candidates/resumes"), {
+        field: "files",
+        fields: { job_id: job.job_id },
+        files: await readFiles(files),
+      });
+      draw(res.resumes);
+      watching = res.resumes.map((r) => r.resume_id).filter(Boolean);
+      picker.value = "";
+      toast(`${res.accepted} resume(s) accepted, ${res.rejected} rejected.`, res.rejected ? "warn" : "ok");
+      stopPolling();
+      if (watching.length) state.pollTimer = setInterval(poll, 8000);
+    } catch (err) {
+      if (err.status === 401) return;
+      error.hidden = false;
+      error.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Upload resumes";
+    }
+  }
+
+  return h("form", { class: "form", style: "margin:0", onsubmit: (e) => { e.preventDefault(); submit(); } },
+    h("div", {}, h("label", { class: "field-label" }, "Resume PDFs"), picker),
+    h("p", { class: "hint" },
+      `Each PDF becomes a candidate on this role. Name, email, phone and links are read from the resume, ` +
+      `so no spreadsheet is needed. Up to ${MAX_RESUME_FILES} files, 10 MB each.`),
+    h("div", { class: "actions" }, btn),
+    error,
+    table);
 }
 
 // ---------------------------------------------------------------- CSV import
@@ -1183,12 +1563,400 @@ async function applicationsView() {
 
 // ---------------------------------------------------------------- application detail
 
+// ---------------------------------------------------------------- assistant
+
+// Model output only ever becomes text nodes. No markdown parser, no innerHTML: the app must
+// never parse what the model wrote as markup.
+function paragraphs(text) {
+  const lines = String(text || "").split("\n");
+  return lines.flatMap((line, i) => (i ? [h("br"), line] : [line]));
+}
+
+async function assistantView() {
+  loading();
+  const [history, jobs] = await Promise.all([
+    api("GET", tenantPath("/assistant/messages")),
+    can("job:read") ? optional(api("GET", tenantPath(`/jobs?limit=${PAGE}&offset=0`))) : null,
+  ]);
+  const roles = Array.isArray(jobs) ? jobs : [];
+  state.assistant = {
+    conversationId: history.conversation_id,
+    messages: history.messages,
+    pending: history.pending_action,
+    busy: false,
+  };
+
+  const list = h("div", { class: "chat" });
+  const box = h("textarea", { class: "input", rows: "3", placeholder: "Ask about candidates for a role…" });
+  const send = h("button", { class: "btn btn-primary", type: "submit" }, "Send");
+  const panel = h("div", {});
+
+  // Kiran cannot receive bytes, and the model never writes on its own. You pick the files and
+  // the role; the app uploads them with your permissions, then tells Kiran what landed.
+  const attach = h("input", {
+    class: "input", type: "file", accept: "application/pdf,.pdf", multiple: true,
+    onchange: () => drawAttach(),
+  });
+  const roleSelect = h("select", { class: "input" },
+    ...roles.map((j) => h("option", { value: j.job_id }, j.title)));
+  const attachRow = h("div", { class: "actions" });
+
+  function drawAttach() {
+    const count = attach.files ? attach.files.length : 0;
+    attachRow.replaceChildren(...(count
+      ? [h("div", { style: "flex:1 1 220px" },
+           h("label", { class: "field-label" }, `Add ${count} resume(s) to`), roleSelect)]
+      : []));
+  }
+
+  function bubble(message) {
+    const parts = [h("div", { class: "msg-bubble" }, ...paragraphs(message.content))];
+    if (message.steps && message.steps.length) {
+      parts.push(h("div", { class: "fine" }, `Looked up: ${message.steps.map(humanize).join(", ")}`));
+    }
+    if (message.fairness_flags && message.fairness_flags.length) {
+      parts.push(h("div", { class: "fine" }, badge("flagged"), " flagged for review"));
+    }
+    return h("div", { class: `msg ${message.role}` }, ...parts);
+  }
+
+  function drawPending() {
+    const pending = state.assistant.pending;
+    if (!pending) return panel.replaceChildren();
+
+    const count = pending.applications.length;
+    const confirm = h("button", { class: "btn btn-primary" },
+      `Send ${count} invite${count === 1 ? "" : "s"}`);
+    const cancel = h("button", { class: "btn" }, "Cancel");
+
+    confirm.addEventListener("click", () => resolveAction(true, confirm, cancel));
+    cancel.addEventListener("click", () => resolveAction(false, confirm, cancel));
+    if (!can("call:create")) confirm.disabled = true;
+
+    panel.replaceChildren(h("div", { class: "card action-card" },
+      h("div", { class: "card-head" }, h("h2", {}, "Confirm before sending")),
+      h("div", { class: "card-body" },
+        h("p", {}, ...paragraphs(pending.reason)),
+        h("table", { class: "table" },
+          h("thead", {}, h("tr", {}, ["Candidate", "Role"].map((t) => h("th", {}, t)))),
+          h("tbody", {}, pending.applications.map((a) =>
+            h("tr", {},
+              h("td", {}, a.candidate_name, h("span", { class: "secondary" }, a.candidate_email)),
+              h("td", {}, a.job_title))))),
+        h("div", { class: "actions" }, confirm, cancel),
+        can("call:create")
+          ? h("p", { class: "hint" }, "Nothing has been sent yet. Kiran cannot send invites on its own.")
+          : h("p", { class: "hint" }, "Your role can't send screening invites."))));
+  }
+
+  function draw() {
+    list.replaceChildren(...(state.assistant.messages.length
+      ? state.assistant.messages.map(bubble)
+      : [h("div", { class: "empty" },
+          "Ask Kiran who the strongest candidates are for a role, why they rank where they do, " +
+          "or to draft screening questions from a job description.")]));
+    if (state.assistant.busy) list.appendChild(h("div", { class: "msg assistant" },
+      h("div", { class: "msg-bubble muted" }, "Thinking…")));
+    drawPending();
+    list.scrollTop = list.scrollHeight;
+  }
+
+  async function resolveAction(confirmed, confirmBtn, cancelBtn) {
+    confirmBtn.disabled = true;
+    cancelBtn.disabled = true;
+    const id = state.assistant.pending.pending_action_id;
+    try {
+      const res = await api("POST", tenantPath(`/assistant/actions/${id}/confirm`), { confirm: confirmed });
+      state.assistant.pending = null;
+      if (confirmed) {
+        const started = res.results.filter((r) => r.status === "started").length;
+        toast(`Started ${started} of ${res.results.length} screening invite(s).`, "ok");
+      } else {
+        toast("Proposal cancelled. Nothing was sent.", "ok");
+      }
+      const refreshed = await api("GET", tenantPath(
+        `/assistant/messages?conversation_id=${state.assistant.conversationId}`));
+      state.assistant.messages = refreshed.messages;
+      state.assistant.pending = refreshed.pending_action;
+    } catch (err) {
+      if (err.status !== 401) toast(err.message, "bad");
+    } finally {
+      draw();
+    }
+  }
+
+  async function uploadAttached() {
+    const files = [...(attach.files || [])];
+    if (!files.length) return null;
+    if (!roles.length) throw new ApiError(400, "Create a role before adding resumes.");
+    if (files.length > MAX_RESUME_FILES) {
+      throw new ApiError(400, `At most ${MAX_RESUME_FILES} resumes at a time.`);
+    }
+    const big = files.find((f) => f.size > MAX_RESUME_BYTES);
+    if (big) throw new ApiError(400, `${big.name} is larger than 10 MB.`);
+
+    const jobId = roleSelect.value;
+    const title = roles.find((j) => j.job_id === jobId)?.title || "the role";
+    const res = await upload(tenantPath("/candidates/resumes"), {
+      field: "files",
+      fields: { job_id: jobId },
+      files: await readFiles(files),
+    });
+    attach.value = "";
+    drawAttach();
+    return { ...res, title };
+  }
+
+  async function submit() {
+    const text = box.value.trim();
+    const hasFiles = Boolean(attach.files && attach.files.length);
+    if ((!text && !hasFiles) || state.assistant.busy) return;
+
+    state.assistant.busy = true;
+    send.disabled = true;
+
+    let uploaded = null;
+    try {
+      uploaded = await uploadAttached();
+    } catch (err) {
+      state.assistant.busy = false;
+      send.disabled = false;
+      if (err.status !== 401) toast(err.message, "bad");
+      return;
+    }
+
+    const prefix = uploaded
+      ? `I just added ${uploaded.accepted} resume(s) to "${uploaded.title}"` +
+        (uploaded.rejected ? ` (${uploaded.rejected} rejected)` : "") + ". "
+      : "";
+    const message = (prefix + text).trim() ||
+      `${prefix}Once they are read, rank them for that role.`;
+
+    state.assistant.messages = state.assistant.messages.concat([{ role: "user", content: message, steps: [] }]);
+    box.value = "";
+    draw();
+
+    try {
+      const res = await api("POST", tenantPath("/assistant/messages"), {
+        message,
+        conversation_id: state.assistant.conversationId,
+      });
+      state.assistant.conversationId = res.conversation_id;
+      state.assistant.messages = state.assistant.messages.concat([{
+        role: "assistant",
+        content: res.text,
+        steps: res.steps,
+        fairness_flags: res.fairness_flags,
+      }]);
+      state.assistant.pending = res.pending_action;
+    } catch (err) {
+      if (err.status !== 401) {
+        toast(err.status === 503
+          ? "The assistant isn't configured on this server."
+          : err.message, "bad");
+        // Keep the question in the box so a provider hiccup doesn't lose what they typed.
+        // The upload already happened and is not undone; the message says so.
+        state.assistant.messages = state.assistant.messages.slice(0, -1);
+        box.value = text;
+      }
+    } finally {
+      state.assistant.busy = false;
+      send.disabled = false;
+      draw();
+      box.focus();
+    }
+  }
+
+  box.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      submit();
+    }
+  });
+
+  async function newChat() {
+    state.assistant = { conversationId: null, messages: [], pending: null, busy: false };
+    draw();
+    box.focus();
+  }
+
+  async function deleteChat() {
+    if (!state.assistant.conversationId) return newChat();
+    try {
+      await api("DELETE", tenantPath(`/assistant/conversations/${state.assistant.conversationId}`));
+      toast("Chat deleted.", "ok");
+      newChat();
+    } catch (err) {
+      if (err.status !== 401) toast(err.message, "bad");
+    }
+  }
+
+  render(
+    h("div", { class: "page-head" },
+      h("div", {}, h("h1", {}, "Assistant"),
+        h("div", { class: "sub" }, "Kiran · ranks candidates, explains why, and proposes screenings")),
+      h("div", { class: "toolbar" },
+        h("button", { class: "btn", onclick: newChat }, "New chat"),
+        h("button", { class: "btn", onclick: deleteChat }, "Delete chat"))),
+    h("div", { class: "card" }, list),
+    panel,
+    h("form", { class: "composer", onsubmit: (e) => { e.preventDefault(); submit(); } },
+      box,
+      can("candidate:write") && roles.length
+        ? [h("label", { class: "field-label" }, "Attach resumes (optional)"), attach, attachRow]
+        : null,
+      h("div", { class: "actions" }, send)));
+
+  draw();
+  box.focus();
+}
+
+function resumeCardFor(app, resume) {
+  const head = h("div", { class: "card-head" },
+    h("h2", {}, "Resume"),
+    resume ? badge(resume.status) : badge("awaiting_resume"));
+
+  if (!resume) {
+    return h("div", { class: "card" }, head,
+      h("div", { class: "card-body" },
+        h("p", { class: "muted" }, "No resume on file yet."),
+        attachResumeForm(app, false)));
+  }
+
+  if (resume.status === "failed") {
+    return h("div", { class: "card" }, head,
+      h("div", { class: "card-body" },
+        h("p", { class: "error" }, resume.error_detail || "This resume could not be read."),
+        h("p", { class: "hint" },
+          "Scanned or image-only PDFs have no selectable text. Upload a text PDF instead."),
+        h("div", { class: "actions" }, viewPdfButton(app)),
+        attachResumeForm(app, true)));
+  }
+
+  const data = resume.data || {};
+  const links = data.links || {};
+  const linkEntries = Object.entries(links)
+    .filter(([key, value]) => key !== "other" && value)
+    .concat((links.other || []).map((url) => ["link", url]));
+
+  return h("div", { class: "card" }, head,
+    h("div", { class: "card-body" },
+      h("dl", { class: "kv" },
+        h("dt", {}, "Experience"),
+        h("dd", {}, data.total_years_experience == null ? "—" : `${data.total_years_experience} years`),
+        h("dt", {}, "File"), h("dd", {}, resume.filename)),
+      (data.skills || []).length
+        ? [h("div", { class: "field-label" }, "Skills"),
+           h("p", {}, (data.skills || []).join(", "))]
+        : null,
+      (data.experience || []).length
+        ? [h("div", { class: "field-label" }, "History"),
+           h("div", {}, (data.experience || []).map((e) =>
+             h("div", { class: "rubric-item" },
+               h("div", { class: "label" },
+                 h("span", {}, `${e.title || "Role"} · ${e.company || "—"}`),
+                 h("span", { class: "muted" }, `${e.start || "?"} – ${e.end || "now"}`)),
+               e.summary ? h("div", { class: "evidence" }, e.summary) : null)))]
+        : null,
+      (data.education || []).length
+        ? [h("div", { class: "field-label" }, "Education"),
+           h("ul", { class: "list" }, ...(data.education || []).map((e) =>
+             h("li", {}, [e.degree, e.institution, e.year].filter(Boolean).join(", "))))]
+        : null,
+      linkEntries.length
+        ? [h("div", { class: "field-label" }, "Links"),
+           h("p", {}, ...linkEntries.map(([key, url], i) =>
+             h("span", {}, i ? " · " : "", h("a", { href: url }, humanize(key)))))]
+        : null,
+      h("div", { class: "actions" }, viewPdfButton(app)),
+      attachResumeForm(app, true)));
+}
+
+function attachResumeForm(app, hasResume) {
+  if (!can("candidate:write")) return null;
+
+  const picker = h("input", { class: "input", type: "file", accept: "application/pdf,.pdf" });
+  const btn = h("button", { class: "btn btn-primary btn-sm", type: "submit" },
+    hasResume ? "Replace resume" : "Attach resume");
+  const error = h("p", { class: "error" });
+  error.hidden = true;
+
+  async function submit() {
+    error.hidden = true;
+    const picked = picker.files && picker.files[0];
+    if (!picked) {
+      error.hidden = false;
+      error.textContent = "Choose a PDF first.";
+      return;
+    }
+    if (picked.size > MAX_RESUME_BYTES) {
+      error.hidden = false;
+      error.textContent = "That resume is larger than 10 MB.";
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = "Uploading…";
+    try {
+      await upload(tenantPath(`/candidates/${app.candidate_id}/resume`), {
+        field: "file",
+        fields: { job_id: app.job_id },
+        files: await readFiles([picked]),
+      });
+      toast("Resume uploaded — reading and re-scoring it now.", "ok");
+      route();
+    } catch (err) {
+      if (err.status === 401) return;
+      error.hidden = false;
+      error.textContent = err.message;
+      btn.disabled = false;
+      btn.textContent = hasResume ? "Replace resume" : "Attach resume";
+    }
+  }
+
+  return h("form", { class: "form", style: "margin:12px 0 0", onsubmit: (e) => { e.preventDefault(); submit(); } },
+    h("label", { class: "field-label" }, hasResume ? "Replace with a newer PDF" : "Attach a resume PDF"),
+    picker,
+    h("p", { class: "hint" }, hasResume
+      ? "The newest resume is the one used for scoring and screening."
+      : "Screening unlocks once a resume has been read."),
+    h("div", { class: "actions" }, btn),
+    error);
+}
+
+function viewPdfButton(app) {
+  const btn = h("button", { class: "btn btn-sm" }, "View PDF");
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    try {
+      await openFile(
+        tenantPath(`/candidates/${app.candidate_id}/resume/file`),
+        `${app.candidate_name}.pdf`,
+      );
+    } catch (err) {
+      if (err.status !== 401) toast(err.message, "bad");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  return btn;
+}
+
 async function applicationView(applicationId) {
   loading();
   const app = await api("GET", tenantPath(`/applications/${applicationId}`));
   const active = app.calls.some((c) => ACTIVE_STATUSES.has(c.status));
+  const resume = can("candidate:read")
+    ? await optional(api("GET", tenantPath(`/candidates/${app.candidate_id}/resume`)))
+    : null;
+  const resumeStatus = resume && !resume.missing ? resume.status : "awaiting_resume";
+  const screenable = resumeStatus === "ready";
 
-  const inviteBtn = h("button", { class: "btn btn-primary", onclick: () => sendInvite(app, inviteBtn), disabled: active }, "Send email invite");
+  const inviteBtn = h("button", {
+    class: "btn btn-primary",
+    onclick: () => sendInvite(app, inviteBtn),
+    disabled: active || !screenable,
+  }, "Send email invite");
   const actions = can("call:create")
     ? h("div", { class: "card" },
         h("div", { class: "card-head" }, h("h2", {}, "Screening")),
@@ -1196,10 +1964,16 @@ async function applicationView(applicationId) {
           h("div", { class: "actions" },
             inviteBtn,
             h("button", { class: "btn", disabled: true, title: "Phone screening (Twilio/SIP) is not available yet" }, "Phone call · coming soon")),
-          h("p", { class: "hint" }, active
-            ? "A screening is in progress for this candidate. This page refreshes on its own."
-            : `Emails ${app.candidate_email} a personal link to take the AI screening call in their browser. The link works for 72 hours and is re-sent if unused.`)))
+          h("p", { class: "hint" }, !screenable
+            ? (resumeStatus === "extracting"
+                ? "Their resume is still being read. Screening unlocks once it is ready."
+                : "This candidate has no extracted resume yet. Attach one before screening.")
+            : active
+              ? "A screening is in progress for this candidate. This page refreshes on its own."
+              : `Emails ${app.candidate_email} a personal link to take the AI screening call in their browser. The link works for 72 hours and is re-sent if unused.`)))
     : null;
+
+  const resumeCard = resumeCardFor(app, resume && !resume.missing ? resume : null);
 
   const latest = app.scores[0];
   const breakdown = latest ? Object.entries(latest.breakdown).filter(([k, v]) => k !== "overall" && typeof v === "number") : [];
@@ -1229,6 +2003,7 @@ async function applicationView(applicationId) {
             h("dt", {}, "Applied"), h("dd", {}, fmtDateTime(app.created_at)),
             h("dt", {}, "Scores"), h("dd", {}, String(app.scores.length)))))),
     actions,
+    resumeCard,
     h("div", { class: "card" },
       h("div", { class: "card-head" }, h("h2", {}, "Calls")),
       app.calls.length

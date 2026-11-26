@@ -119,15 +119,30 @@ def _resolve_slot(slot: str, config: SlotConfig, secrets: dict[UUID, Secret]) ->
     )
 
 
+async def resolve_org_llm(
+    session: AsyncSession, organization: Organization
+) -> ResolvedProvider:
+    account = await session.get(Account, organization.account_id)
+    if account is None:
+        raise ProviderNotConfigured("organization has no account")
+
+    selection = merge_selection(organization.provider_config, account.provider_config)
+    secrets = await _secrets(session, account.id)
+
+    return _resolve_slot("llm_summary", selection.llm_summary, secrets)
+
+
 async def resolve_providers(
-    session: AsyncSession, organization: Organization, job: Job
+    session: AsyncSession, organization: Organization, job: Job | None
 ) -> ResolvedProviders:
     account = await session.get(Account, organization.account_id)
     if account is None:
         raise ProviderNotConfigured("organization has no account")
 
     selection = merge_selection(
-        job.provider_config, organization.provider_config, account.provider_config
+        job.provider_config if job else None,
+        organization.provider_config,
+        account.provider_config,
     )
     secrets = await _secrets(session, account.id)
 

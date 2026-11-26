@@ -206,3 +206,18 @@ textarea.input { min-height: 160px; resize: vertical; font: inherit; }
 }
 .toast.bad { background: var(--bad); color: #fff; }
 .spinner { color: var(--muted); padding: 32px 0; }
+
+/* ranked candidates */
+.table tr.qualified td { background: var(--ok-soft); }
+
+/* assistant */
+.chat { display: flex; flex-direction: column; gap: 12px; padding: 16px; max-height: 58vh; overflow-y: auto; }
+.msg { display: flex; flex-direction: column; max-width: 76%; }
+.msg.user { align-self: flex-end; align-items: flex-end; }
+.msg.assistant { align-self: flex-start; }
+.msg-bubble { padding: 10px 14px; border-radius: 14px; line-height: 1.55; background: var(--surface-2); }
+.msg.user .msg-bubble { background: var(--accent-soft); }
+.msg .fine { margin: 4px 2px 0; }
+.composer { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.composer textarea { resize: vertical; font-family: inherit; }
+.action-card { border-color: var(--accent); }

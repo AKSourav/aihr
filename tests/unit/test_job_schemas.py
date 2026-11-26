@@ -2,9 +2,9 @@ import pytest
 from pydantic import ValidationError
 
 from core.schemas import QuestionPlan, Rubric, RubricScore
+from core.scoring import weighted_overall
 from core.summarizer import _render_rubric
 from scripts.seed import CUSTOMER_SUPPORT_JOB, SDE1_JOB, SENIOR_BACKEND_JOB
-from services.temporal_worker.activities.summarize_call import _weighted_overall
 
 VALID_DIMENSION = {"dimension": "depth", "weight": 0.5, "description": "technical depth"}
 
@@ -59,7 +59,7 @@ def test_dumped_rubric_works_with_summary_consumers():
     rubric = Rubric.model_validate(SENIOR_BACKEND_JOB["rubric"]).model_dump()
     scores = [RubricScore(dimension=item["dimension"], score=1.0, evidence="e") for item in rubric]
 
-    assert _weighted_overall(rubric, scores) == 1.0
+    assert weighted_overall(rubric, scores) == 1.0
     assert "backend_depth (weight 0.35)" in _render_rubric(rubric)
 
 

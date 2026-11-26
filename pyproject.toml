@@ -23,6 +23,9 @@ dependencies = [
     "dateparser>=1.4.3",
     "pyjwt[crypto]>=2.10.1",
     "livekit-plugins-elevenlabs>=1.8.9",
+    "python-multipart==0.0.34",
+    "pypdf==7.2.0",
+    "mcp==2.3.0",
 ]
 
 [tool.uv]

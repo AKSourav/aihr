@@ -9,4 +9,6 @@ contextBridge.exposeInMainWorld("aihr", {
   put: (path, body) => ipcRenderer.invoke("api:request", { method: "PUT", path, body }),
   del: (path) => ipcRenderer.invoke("api:request", { method: "DELETE", path }),
   signup: (body) => ipcRenderer.invoke("api:signup", body),
+  upload: (path, payload) => ipcRenderer.invoke("api:upload", { path, ...payload }),
+  openFile: (path, name) => ipcRenderer.invoke("api:open-file", { path, name }),
 });

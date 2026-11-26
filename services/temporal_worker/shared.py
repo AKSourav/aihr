@@ -46,3 +46,19 @@ class MarkUnreachableInput:
 @dataclass
 class SummarizeCallInput:
     call_id: str
+
+
+@dataclass
+class ExtractResumeInput:
+    resume_id: str
+
+
+@dataclass
+class FailResumeInput:
+    resume_id: str
+    reason: str
+
+
+@dataclass
+class ScoreResumeInput:
+    application_id: str

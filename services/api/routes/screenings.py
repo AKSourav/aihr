@@ -11,6 +11,7 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 from core.db import get_session
 from core.models import Application, AuditEvent
 from core.permissions import Permission
+from core.resumes import READY, resume_status
 from core.schemas import CallMode
 from core.settings import get_settings
 from services.api.authz import TenantContext, require
@@ -30,24 +31,22 @@ class StartScreeningResponse(BaseModel):
     channel: str
 
 
-@router.post("/{application_id}/screenings", response_model=StartScreeningResponse, status_code=202)
-async def start_screening(
-    application_id: UUID,
-    body: StartScreeningRequest,
-    context: TenantContext = Depends(require(Permission.CALL_CREATE)),
-    session: AsyncSession = Depends(get_session),
-) -> StartScreeningResponse:
-    application = await session.scalar(
-        select(Application).where(
-            Application.id == application_id, Application.org_id == context.org_id
-        )
-    )
-    if application is None:
-        raise HTTPException(status_code=404, detail="not found")
+async def start_screening_for(
+    session: AsyncSession,
+    context: TenantContext,
+    application: Application,
+    source: dict | None = None,
+) -> str:
+    """Start the email screening workflow for one application and audit it.
 
-    if body.channel == "phone":
+    Shared by the recruiter's own button and the assistant's confirmed proposal, so the
+    resume gate, the 503/409 behaviour and the audit trail cannot drift apart.
+    """
+    status = await resume_status(session, context.org_id, application.candidate_id)
+    if status != READY:
         raise HTTPException(
-            status_code=501, detail="phone screenings are not available yet; use channel 'email'"
+            status_code=409,
+            detail="this candidate has no extracted resume yet; upload one before screening",
         )
 
     settings = get_settings()
@@ -82,10 +81,34 @@ async def start_screening(
             entity_type="application",
             entity_id=application.id,
             event_type="screening_started",
-            payload={"channel": body.channel, "workflow_id": workflow_id},
+            payload={"channel": "email", "workflow_id": workflow_id, **(source or {})},
         )
     )
+    logger.info("screening started", extra={"workflow_id": workflow_id, "channel": "email"})
+    return workflow_id
+
+
+@router.post("/{application_id}/screenings", response_model=StartScreeningResponse, status_code=202)
+async def start_screening(
+    application_id: UUID,
+    body: StartScreeningRequest,
+    context: TenantContext = Depends(require(Permission.CALL_CREATE)),
+    session: AsyncSession = Depends(get_session),
+) -> StartScreeningResponse:
+    application = await session.scalar(
+        select(Application).where(
+            Application.id == application_id, Application.org_id == context.org_id
+        )
+    )
+    if application is None:
+        raise HTTPException(status_code=404, detail="not found")
+
+    if body.channel == "phone":
+        raise HTTPException(
+            status_code=501, detail="phone screenings are not available yet; use channel 'email'"
+        )
+
+    workflow_id = await start_screening_for(session, context, application)
     await session.commit()
-    logger.info("screening started", extra={"workflow_id": workflow_id, "channel": body.channel})
 
     return StartScreeningResponse(workflow_id=workflow_id, channel=body.channel)
