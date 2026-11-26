@@ -114,7 +114,7 @@ def _resolve_slot(slot: str, config: SlotConfig, secrets: dict[UUID, Secret]) ->
         provider=provider,
         model=model or "",
         api_key=api_key,
-        base_url=config.base_url or (settings.llm_base_url or None),
+        base_url=config.base_url or (settings.llm_base_url or None if slot in ENV_MODEL else None),
         voice_id=voice_id,
     )
 

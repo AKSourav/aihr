@@ -234,3 +234,16 @@ async def test_job_beats_organization_beats_account(session, two_tenants):
     assert resolved.llm_call.model == "job-model"
     assert resolved.tts.voice_id == "org-voice"
     assert resolved.stt.model == "account-stt"
+
+
+async def test_the_env_gateway_url_reaches_only_the_llm_slots(session, two_tenants, monkeypatch):
+    monkeypatch.setenv("LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    get_settings.cache_clear()
+    organization, job = await fixtures(session, two_tenants)
+
+    resolved = await resolve_providers(session, organization, job)
+
+    assert resolved.llm_call.base_url == "https://openrouter.ai/api/v1"
+    assert resolved.llm_summary.base_url == "https://openrouter.ai/api/v1"
+    assert resolved.stt.base_url is None
+    assert resolved.tts.base_url is None
